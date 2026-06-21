@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 import WebKit
 
 struct BrowserScreen: View {
@@ -80,6 +81,9 @@ struct BrowserScreen: View {
                     onPortal: { appState.activeEndpoint = nil },
                     onSwitch: { appState.showSwitcher = true },
                     onScreenshot: beginRangeCapture,
+                    onErrorTranslate: {
+                        browser.webView?.evaluateJavaScript("window.__tavernLiteTools?.scanErrors?.()")
+                    },
                     onSettings: { showSettings = true },
                     onPictureInPicture: {
                         if browser.pictureInPicture.toggle() {
@@ -245,36 +249,31 @@ private struct FloatingDock: View {
     let onPortal: () -> Void
     let onSwitch: () -> Void
     let onScreenshot: () -> Void
+    let onErrorTranslate: () -> Void
     let onSettings: () -> Void
     let onPictureInPicture: () -> Void
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 9) {
             if showControls {
-                VStack(spacing: 7) {
-                    HStack(spacing: 4) {
+                VStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         dockButton("chevron.backward", disabled: !canGoBack, action: onBack)
                         dockButton("arrow.clockwise", action: onReload)
                         dockButton("house.fill", action: onPortal)
                         dockButton("gearshape.fill", action: onSettings)
                     }
-                    .padding(5)
+                    .padding(7)
                     .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(Capsule().stroke(.white.opacity(0.18)))
 
-                    Button(action: onScreenshot) {
-                        Label("选区长截图", systemImage: "rectangle.and.text.magnifyingglass")
-                            .dockLabelStyle()
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                        dockToolButton("选区截图", "rectangle.and.text.magnifyingglass", action: onScreenshot)
+                        dockToolButton("错误翻译", "cross.case.fill", action: onErrorTranslate)
+                        dockToolButton("画中画", "pip", action: onPictureInPicture)
+                        dockToolButton("切换", "arrow.triangle.2.circlepath", action: onSwitch)
                     }
-
-                    Button(action: onPictureInPicture) {
-                        Label("画中画", systemImage: "pip")
-                            .dockLabelStyle()
-                    }
-
-                    Button(action: onSwitch) {
-                        Label("切换云洞", systemImage: "arrow.triangle.2.circlepath")
-                            .dockLabelStyle()
-                    }
+                    .frame(width: 218)
                 }
                 .transition(.scale.combined(with: .opacity))
             }
@@ -282,23 +281,34 @@ private struct FloatingDock: View {
             ZStack {
                 Circle()
                     .fill(
-                        LinearGradient(
+                        RadialGradient(
                             colors: [
-                                Color(red: 0.05, green: 0.18, blue: 0.34),
-                                Color.black.opacity(0.88)
+                                Color.white.opacity(0.92),
+                                Color(red: 0.42, green: 0.76, blue: 1.0).opacity(0.55),
+                                Color(red: 0.10, green: 0.16, blue: 0.32).opacity(0.92),
+                                Color.black.opacity(0.92)
                             ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                            center: .topLeading,
+                            startRadius: 2,
+                            endRadius: 58
                         )
                     )
                 Circle()
-                    .stroke(isGenerating ? Color.green : .white.opacity(0.28), lineWidth: isGenerating ? 3 : 1)
-                Image(systemName: isGenerating ? "ellipsis.message.fill" : (showControls ? "drop.fill" : "drop"))
-                    .font(.title2.bold())
-                    .foregroundStyle(isGenerating ? .green : Color(red: 1, green: 0.92, blue: 0.62))
+                    .strokeBorder(.white.opacity(0.34), lineWidth: 1)
+                Circle()
+                    .trim(from: 0.08, to: isGenerating ? 0.92 : 0.62)
+                    .stroke(
+                        isGenerating ? Color.green : Color(red: 1, green: 0.78, blue: 0.26),
+                        style: StrokeStyle(lineWidth: 3.2, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .padding(4)
+                Image(systemName: isGenerating ? "sparkles" : (showControls ? "xmark" : "pawprint.fill"))
+                    .font(.system(size: 22, weight: .black))
+                    .foregroundStyle(isGenerating ? .green : Color(red: 1, green: 0.88, blue: 0.48))
             }
-            .frame(width: 58, height: 58)
-            .shadow(color: .black.opacity(0.35), radius: 10, y: 5)
+            .frame(width: 62, height: 62)
+            .shadow(color: .black.opacity(0.38), radius: 14, y: 7)
             .contentShape(Circle())
             .onTapGesture {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) {
@@ -385,6 +395,29 @@ private struct FloatingDock: View {
         return clamped(CGPoint(x: x, y: point.y))
     }
 
+    private func dockToolButton(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .black))
+                Text(title)
+                    .font(.system(size: 12, weight: .heavy))
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .frame(height: 58)
+            .background(
+                LinearGradient(
+                    colors: [.white.opacity(0.18), .white.opacity(0.07)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(.white.opacity(0.16)))
+        }
+    }
+
     private func dockButton(
         _ icon: String,
         disabled: Bool = false,
@@ -445,6 +478,13 @@ private struct FloatingSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+
+                Section("DogTavern 工具") {
+                    Label("选中 AI 回复文字，会浮现“划词翻译 / 生成卡片”按钮", systemImage: "textformat")
+                    Label("错误翻译会扫描当前页面报错，并优先使用 40+ 内置错误字典", systemImage: "cross.case.fill")
+                    Label("字典未命中时，可继续调用 Microsoft Edge 翻译", systemImage: "globe")
+                }
+
                 Section("操作说明") {
                     Label("拖动：移动悬浮球", systemImage: "hand.draw")
                     Label("轻点：展开或收起工具", systemImage: "hand.tap")
@@ -498,6 +538,14 @@ struct WebView: UIViewRepresentable {
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.userContentController.add(context.coordinator, name: "tavernReply")
         configuration.userContentController.add(context.coordinator, name: "tavernBridgeConfig")
+        configuration.userContentController.add(context.coordinator, name: "tavernTools")
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: TavernToolsScript.source,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true
+            )
+        )
         configuration.userContentController.addUserScript(
             WKUserScript(
                 source: Self.replyObserverScript,
@@ -747,12 +795,18 @@ struct WebView: UIViewRepresentable {
                 browser.canGoBack = webView.canGoBack
             }
             webView.evaluateJavaScript(WebView.replyObserverScript)
+            webView.evaluateJavaScript(TavernToolsScript.source)
         }
 
         func userContentController(
             _ userContentController: WKUserContentController,
             didReceive message: WKScriptMessage
         ) {
+            if message.name == "tavernTools",
+               let payload = message.body as? [String: Any] {
+                handleTavernTools(payload)
+                return
+            }
             if message.name == "tavernBridgeConfig",
                let body = message.body as? [String: Any],
                let channel = body["channel"] as? String,
@@ -795,6 +849,55 @@ struct WebView: UIViewRepresentable {
             }
         }
 
+
+        private func handleTavernTools(_ payload: [String: Any]) {
+            guard let action = payload["action"] as? String else { return }
+            let requestId = payload["requestId"] as? String
+            switch action {
+            case "translate":
+                let text = payload["text"] as? String ?? ""
+                EdgeTranslatorService.shared.translate(text) { [weak self] result in
+                    switch result {
+                    case .success(let value):
+                        self?.sendTavernToolsResult(requestId: requestId, ok: true, text: value, error: nil)
+                    case .failure(let error):
+                        self?.sendTavernToolsResult(requestId: requestId, ok: false, text: nil, error: error.localizedDescription)
+                    }
+                }
+            case "makeCard":
+                let text = payload["text"] as? String ?? ""
+                let character = payload["character"] as? String
+                let image = SelectionCardService.makeCard(text: text, character: character)
+                presentShare(items: [image])
+                sendTavernToolsResult(requestId: requestId, ok: true, text: "卡片已生成", error: nil)
+            default:
+                break
+            }
+        }
+
+        private func sendTavernToolsResult(requestId: String?, ok: Bool, text: String?, error: String?) {
+            guard let requestId else { return }
+            var payload: [String: Any] = [
+                "requestId": requestId,
+                "ok": ok
+            ]
+            if let text { payload["text"] = text }
+            if let error { payload["error"] = error }
+            guard let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            browser.webView?.evaluateJavaScript("window.__tavernLiteTools?.nativeResult?.(\(json))")
+        }
+
+        private func presentShare(items: [Any]) {
+            guard let webView = browser.webView,
+                  let controller = webView.window?.rootViewController else { return }
+            let activity = UIActivityViewController(activityItems: items, applicationActivities: nil)
+            if let popover = activity.popoverPresentationController {
+                popover.sourceView = webView
+                popover.sourceRect = CGRect(x: webView.bounds.midX, y: webView.bounds.midY, width: 1, height: 1)
+            }
+            controller.present(activity, animated: true)
+        }
 
         private func startCompletionPolling(_ webView: WKWebView) {
             completionPollTimer?.invalidate()
