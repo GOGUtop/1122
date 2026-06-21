@@ -415,9 +415,6 @@ private extension View {
 private struct FloatingSettingsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var sounds = NotificationSoundSettings.shared
-    @State private var importingOutcome: ReplyOutcome?
-    @State private var soundError: String?
 
     var body: some View {
         NavigationStack {
@@ -435,34 +432,10 @@ private struct FloatingSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("回复提示音") {
-                    ForEach(ReplyOutcome.allCases) { outcome in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(outcome.title)
-                                Text(sounds.displayName(for: outcome))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("试听") { sounds.preview(outcome: outcome) }
-                            Button("导入") { importingOutcome = outcome }
-                            Button("默认") { sounds.restoreBuiltInSound(for: outcome) }
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Text("支持 CAF、WAV、AIF、AIFF，单个音频不超过 30 秒。每次回复只响一次并震动一次。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("顶部横幅通知") {
-                    Button {
-                        ReplyNotificationService.shared.sendBannerTest()
-                    } label: {
-                        Label("测试顶部横幅", systemImage: "rectangle.topthird.inset.filled")
-                    }
-                    Text("若测试通知只出现在锁屏或通知中心，请到 iPhone 设置 → 通知 → 云洞酒馆，开启“横幅”，并将横幅样式设为临时或持续。")
+                Section("画中画完成提示") {
+                    Label("系统横幅、声音和震动已关闭", systemImage: "bell.slash.fill")
+                    Label("回复结束后只在画中画里显示状态条", systemImage: "pip.fill")
+                    Text("这样不会再被酒馆原生事件、服务端桥接和后台轮询重复触发。完整、截断、空回会在画中画里用不同颜色和文字提示。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -478,29 +451,6 @@ private struct FloatingSettingsView: View {
             }
             .navigationTitle("悬浮球设置")
             .navigationBarTitleDisplayMode(.inline)
-            .fileImporter(
-                isPresented: Binding(
-                    get: { importingOutcome != nil },
-                    set: { if !$0 { importingOutcome = nil } }
-                ),
-                allowedContentTypes: [.audio]
-            ) { result in
-                guard let outcome = importingOutcome else { return }
-                importingOutcome = nil
-                do {
-                    try sounds.importSound(from: result.get(), for: outcome)
-                } catch {
-                    soundError = error.localizedDescription
-                }
-            }
-            .alert("提示音导入失败", isPresented: Binding(
-                get: { soundError != nil },
-                set: { if !$0 { soundError = nil } }
-            )) {
-                Button("好", role: .cancel) {}
-            } message: {
-                Text(soundError ?? "")
-            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }

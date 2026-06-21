@@ -1,6 +1,5 @@
 import Foundation
 import WebKit
-import UserNotifications
 
 struct TavernEndpoint: Identifiable, Hashable {
     let id: Int
@@ -59,9 +58,4 @@ final class AppState: ObservableObject {
         UserDefaults.standard.set(value, forKey: "floatingOpacity")
     }
 
-    func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(
-            options: [.alert, .sound, .badge, .timeSensitive]
-        ) { _, _ in }
-    }
 }

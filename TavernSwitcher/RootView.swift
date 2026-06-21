@@ -20,8 +20,5 @@ struct RootView: View {
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
-        .onAppear {
-            appState.requestNotificationPermission()
-        }
     }
 }
