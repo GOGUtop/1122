@@ -1,7 +1,4 @@
-import Foundation
 
-enum TavernToolsScript {
-    static let source = #"""
 (() => {
   if (window.__tavernLiteToolsInstalled) return;
   window.__tavernLiteToolsInstalled = true;
@@ -474,5 +471,3 @@ enum TavernToolsScript {
     }
   };
 })();
-"""#
-}

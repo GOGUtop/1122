@@ -81,9 +81,6 @@ struct BrowserScreen: View {
                     onPortal: { appState.activeEndpoint = nil },
                     onSwitch: { appState.showSwitcher = true },
                     onScreenshot: beginRangeCapture,
-                    onErrorTranslate: {
-                        browser.webView?.evaluateJavaScript("window.__tavernLiteTools?.scanErrors?.()")
-                    },
                     onSettings: { showSettings = true },
                     onPictureInPicture: {
                         if browser.pictureInPicture.toggle() {
@@ -249,7 +246,6 @@ private struct FloatingDock: View {
     let onPortal: () -> Void
     let onSwitch: () -> Void
     let onScreenshot: () -> Void
-    let onErrorTranslate: () -> Void
     let onSettings: () -> Void
     let onPictureInPicture: () -> Void
 
@@ -269,7 +265,6 @@ private struct FloatingDock: View {
 
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                         dockToolButton("选区截图", "rectangle.and.text.magnifyingglass", action: onScreenshot)
-                        dockToolButton("错误翻译", "cross.case.fill", action: onErrorTranslate)
                         dockToolButton("画中画", "pip", action: onPictureInPicture)
                         dockToolButton("切换", "arrow.triangle.2.circlepath", action: onSwitch)
                     }
@@ -485,9 +480,9 @@ private struct FloatingSettingsView: View {
 
 
                 Section("DogTavern 工具") {
-                    Label("选中 AI 回复文字，会浮现“划词翻译 / 生成卡片”按钮，生成卡片可选多主题", systemImage: "textformat")
-                    Label("错误翻译会扫描当前页面报错，并优先使用 40+ 内置错误字典", systemImage: "cross.case.fill")
-                    Label("翻译加入缓存、中文检测和复制按钮，重复翻译会更快", systemImage: "globe")
+                    Label("选中 AI 回复文字，会在底部浮现“翻译 / 生成卡片”按钮，不再顶到 iOS 原生菜单", systemImage: "textformat")
+                    Label("红色报错弹窗出现时会自动翻译，不需要再手动点错误翻译", systemImage: "cross.case.fill")
+                    Label("卡片生成加入回调提示和更稳的分享面板打开方式", systemImage: "photo.on.rectangle")
                 }
 
                 Section("操作说明") {
@@ -873,9 +868,16 @@ struct WebView: UIViewRepresentable {
                 let text = payload["text"] as? String ?? ""
                 let character = payload["character"] as? String
                 let theme = payload["theme"] as? String
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    sendTavernToolsResult(requestId: requestId, ok: false, text: nil, error: "没有可用选区，请重新选中 AI 回复文字。")
+                    return
+                }
                 let image = SelectionCardService.makeCard(text: text, character: character, theme: theme)
-                presentShare(items: [image])
-                sendTavernToolsResult(requestId: requestId, ok: true, text: "卡片已生成", error: nil)
+                if presentShare(items: [image]) {
+                    sendTavernToolsResult(requestId: requestId, ok: true, text: "卡片已生成", error: nil)
+                } else {
+                    sendTavernToolsResult(requestId: requestId, ok: false, text: nil, error: "系统分享面板打开失败，请重新点一次卡片。")
+                }
             default:
                 break
             }
@@ -894,15 +896,28 @@ struct WebView: UIViewRepresentable {
             browser.webView?.evaluateJavaScript("window.__tavernLiteTools?.nativeResult?.(\(json))")
         }
 
-        private func presentShare(items: [Any]) {
-            guard let webView = browser.webView,
-                  let controller = webView.window?.rootViewController else { return }
+        @discardableResult
+        private func presentShare(items: [Any]) -> Bool {
+            guard let webView = browser.webView else { return false }
             let activity = UIActivityViewController(activityItems: items, applicationActivities: nil)
             if let popover = activity.popoverPresentationController {
                 popover.sourceView = webView
                 popover.sourceRect = CGRect(x: webView.bounds.midX, y: webView.bounds.midY, width: 1, height: 1)
             }
-            controller.present(activity, animated: true)
+
+            guard let root = webView.window?.rootViewController ?? UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .flatMap({ $0.windows })
+                .first(where: { $0.isKeyWindow })?
+                .rootViewController else { return false }
+
+            var top = root
+            while let presented = top.presentedViewController, !presented.isBeingDismissed {
+                top = presented
+            }
+            if top is UIActivityViewController { return false }
+            top.present(activity, animated: true)
+            return true
         }
 
         private func startCompletionPolling(_ webView: WKWebView) {
