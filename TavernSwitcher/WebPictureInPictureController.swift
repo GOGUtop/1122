@@ -61,7 +61,7 @@ final class WebPictureInPictureController: NSObject {
         previewController.update(text: text, character: character)
     }
 
-    func generationFinished(text: String, outcome: ReplyOutcome) {
+    func generationFinished(text: String, outcome: ReplyOutcome, generationId: String? = nil) {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let suffix = String(normalized.suffix(120))
         let signature = "\(outcome.rawValue)-\(normalized.count)-\(suffix)"
@@ -73,6 +73,11 @@ final class WebPictureInPictureController: NSObject {
         lastFinishSignature = signature
         lastFinishAt = Date()
         previewController.finish(text: text, outcome: outcome)
+
+        if controller?.isPictureInPictureActive == true {
+            let bannerId = generationId ?? "signature-\(signature.hashValue)"
+            ReplyNotificationService.shared.mirrorPiPBannerToSystem(id: bannerId, outcome: outcome)
+        }
     }
 
     func updateBridgeStatus(_ text: String, connected: Bool) {

@@ -415,6 +415,7 @@ private extension View {
 private struct FloatingSettingsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("mirrorPiPAlertToBanner") private var mirrorPiPAlertToBanner = true
 
     var body: some View {
         NavigationStack {
@@ -433,9 +434,13 @@ private struct FloatingSettingsView: View {
                 }
 
                 Section("画中画完成提示") {
-                    Label("系统横幅、声音和震动已关闭", systemImage: "bell.slash.fill")
-                    Label("回复结束后只在画中画里显示状态条", systemImage: "pip.fill")
-                    Text("这样不会再被酒馆原生事件、服务端桥接和后台轮询重复触发。完整、截断、空回会在画中画里用不同颜色和文字提示。")
+                    Toggle("画中画提示同步为系统横幅", isOn: $mirrorPiPAlertToBanner)
+                    Button("测试顶部横幅") {
+                        ReplyNotificationService.shared.sendBannerTest()
+                    }
+                    Label("声音和震动仍保持关闭", systemImage: "bell.slash.fill")
+                    Label("只有画中画状态条出现时才会映射一次横幅", systemImage: "pip.fill")
+                    Text("这个模式不会再让酒馆原生事件、服务端桥接和后台轮询各弹一次。系统横幅是否从顶部弹出，仍受 iPhone 设置 → 通知 → 云洞酒馆 → 横幅 控制。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -708,7 +713,7 @@ struct WebView: UIViewRepresentable {
                           browser.generationStartedAt != nil else { return }
                     let outcome = ReplyOutcome(rawValue: event.reason ?? "") ?? ((event.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .complete)
                     browser.isGenerating = false
-                    browser.pictureInPicture.generationFinished(text: event.text ?? "", outcome: outcome)
+                    browser.pictureInPicture.generationFinished(text: event.text ?? "", outcome: outcome, generationId: resolvedId)
                     ReplyNotificationService.shared.generationFinished(id: resolvedId, outcome: outcome)
                     browser.currentGenerationId = nil
                     browser.generationStartedAt = nil
@@ -781,7 +786,7 @@ struct WebView: UIViewRepresentable {
                         ?? (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .complete)
                     browser.isGenerating = false
                     stopCompletionPolling()
-                    browser.pictureInPicture.generationFinished(text: text, outcome: outcome)
+                    browser.pictureInPicture.generationFinished(text: text, outcome: outcome, generationId: resolvedId)
                     ReplyNotificationService.shared.generationFinished(id: resolvedId, outcome: outcome)
                     browser.currentGenerationId = nil
                     browser.generationStartedAt = nil

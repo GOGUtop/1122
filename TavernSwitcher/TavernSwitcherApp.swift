@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             options: [.customDismissAction]
         )
         center.setNotificationCategories([category])
+        Task { @MainActor in ReplyNotificationService.shared.requestAuthorizationIfNeeded() }
         return true
     }
 
