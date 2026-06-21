@@ -7,15 +7,41 @@ enum TavernToolsScript {
   window.__tavernLiteToolsInstalled = true;
 
   const css = `
-  #dog-actions, #dog-translation, #dog-error-panel, #dog-card-toast { font-family: -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif; z-index: 2147483647; }
-  #dog-actions { position: fixed; display: none; align-items:center; gap: 7px; padding: 7px; border-radius: 999px; background: rgba(18,24,38,.72); backdrop-filter: blur(18px) saturate(1.6); -webkit-backdrop-filter: blur(18px) saturate(1.6); box-shadow: 0 12px 32px rgba(0,0,0,.34); border: 1px solid rgba(255,255,255,.18); transform: translate(-50%, -116%); }
-  #dog-actions button { border: 0; border-radius: 999px; color: #fff; background: rgba(255,255,255,.13); padding: 8px 12px; font-size: 13px; font-weight: 700; white-space: nowrap; }
-  #dog-actions button.primary { color:#15110b; background: linear-gradient(135deg,#ffe58a,#ffc646); box-shadow: inset 0 1px 0 rgba(255,255,255,.55); }
-  #dog-translation { position: fixed; display:none; max-width: min(88vw, 390px); color:#f8fbff; background: rgba(15,20,33,.84); border:1px solid rgba(255,255,255,.16); box-shadow:0 16px 42px rgba(0,0,0,.38); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); border-radius:20px; padding:14px 15px; line-height:1.52; transform: translate(-50%, 10px); }
-  #dog-translation .title { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:800; color:#ffdc70; margin-bottom:7px; }
-  #dog-translation .body { font-size:14px; white-space:pre-wrap; word-break:break-word; }
-  #dog-translation .close { position:absolute; top:8px; right:10px; border:0; color:rgba(255,255,255,.68); background:transparent; font-size:18px; }
-  #dog-error-panel { position: fixed; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); display:none; color:#f7f9ff; background: rgba(10,14,25,.88); border:1px solid rgba(255,255,255,.16); box-shadow:0 -12px 50px rgba(0,0,0,.42); backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4); border-radius: 24px; overflow:hidden; }
+  #dog-actions, #dog-translation, #dog-error-panel, #dog-card-toast, #dog-card-panel { font-family: -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif; z-index: 2147483647; box-sizing:border-box; }
+  #dog-actions { position: fixed; display: none; align-items:center; gap: 7px; padding: 7px; border-radius: 999px; background: rgba(12,18,32,.76); backdrop-filter: blur(22px) saturate(1.8); -webkit-backdrop-filter: blur(22px) saturate(1.8); box-shadow: 0 14px 38px rgba(0,0,0,.38); border: 1px solid rgba(255,255,255,.20); transform: translate(-50%, -118%); animation: dogPop .18s ease-out; }
+  #dog-actions button { border: 0; border-radius: 999px; color: #fff; background: rgba(255,255,255,.13); padding: 9px 13px; font-size: 13px; font-weight: 850; white-space: nowrap; display:flex; align-items:center; gap:5px; }
+  #dog-actions button.primary { color:#15110b; background: linear-gradient(135deg,#fff0a3,#ffc845); box-shadow: inset 0 1px 0 rgba(255,255,255,.62), 0 5px 15px rgba(255,196,49,.22); }
+  #dog-actions .count { color:rgba(255,255,255,.62); font-size:11px; font-weight:800; padding:0 4px; }
+  #dog-translation { position: fixed; display:none; width:min(90vw, 420px); color:#f8fbff; background: rgba(11,16,29,.88); border:1px solid rgba(255,255,255,.17); box-shadow:0 18px 48px rgba(0,0,0,.42); backdrop-filter: blur(24px) saturate(1.55); -webkit-backdrop-filter: blur(24px) saturate(1.55); border-radius:24px; padding:14px 15px 15px; line-height:1.54; transform: translate(-50%, 10px); animation: dogPop .18s ease-out; }
+  #dog-translation .top { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:9px; }
+  #dog-translation .title { font-size:13px; font-weight:900; color:#ffdf73; }
+  #dog-translation .actions { display:flex; gap:6px; }
+  #dog-translation button { border:0; border-radius:999px; color:rgba(255,255,255,.84); background:rgba(255,255,255,.10); font-size:12px; font-weight:800; padding:6px 9px; }
+  #dog-translation .label { color:rgba(255,255,255,.48); font-size:11px; font-weight:800; margin:8px 0 4px; }
+  #dog-translation .origin { max-height:82px; overflow:auto; color:rgba(255,255,255,.55); font-size:12px; white-space:pre-wrap; word-break:break-word; padding:9px 10px; border-radius:14px; background:rgba(255,255,255,.055); }
+  #dog-translation .body { font-size:15px; white-space:pre-wrap; word-break:break-word; color:#fff; padding:10px 2px 2px; }
+  #dog-translation.loading .body { color:rgba(255,255,255,.72); }
+  #dog-card-panel { position:fixed; left:12px; right:12px; bottom:max(12px, env(safe-area-inset-bottom)); display:none; color:#fff; background:rgba(8,12,23,.90); border:1px solid rgba(255,255,255,.16); box-shadow:0 -14px 54px rgba(0,0,0,.44); backdrop-filter:blur(26px) saturate(1.45); -webkit-backdrop-filter:blur(26px) saturate(1.45); border-radius:28px; overflow:hidden; animation: dogSlide .2s ease-out; }
+  #dog-card-panel .head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:15px 16px 10px; border-bottom:1px solid rgba(255,255,255,.08); }
+  #dog-card-panel .head b { font-size:17px; }
+  #dog-card-panel .head span { display:block; font-size:11px; color:rgba(255,255,255,.54); margin-top:2px; }
+  #dog-card-panel .head button { border:0; border-radius:12px; padding:7px 10px; color:#fff; background:rgba(255,255,255,.12); font-weight:800; }
+  #dog-card-panel .themes { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; padding:12px 13px 15px; }
+  #dog-card-panel .theme { border:1px solid rgba(255,255,255,.12); border-radius:20px; padding:12px 12px 11px; text-align:left; color:#fff; min-height:72px; overflow:hidden; position:relative; background:rgba(255,255,255,.08); }
+  #dog-card-panel .theme:before { content:''; position:absolute; inset:0; opacity:.9; z-index:-1; }
+  #dog-card-panel .theme b { font-size:14px; display:block; margin-bottom:3px; }
+  #dog-card-panel .theme span { font-size:11px; color:rgba(255,255,255,.68); }
+  #dog-card-panel .theme[data-theme="night"]:before { background:linear-gradient(135deg,#07111f,#10294c,#25133b); }
+  #dog-card-panel .theme[data-theme="cream"]:before { background:linear-gradient(135deg,#fff2d8,#fce7e8,#e9f2ff); }
+  #dog-card-panel .theme[data-theme="cream"] { color:#30243a; } #dog-card-panel .theme[data-theme="cream"] span{color:rgba(48,36,58,.62)}
+  #dog-card-panel .theme[data-theme="cyber"]:before { background:linear-gradient(135deg,#070a16,#161e52,#391052); }
+  #dog-card-panel .theme[data-theme="sakura"]:before { background:linear-gradient(135deg,#3a1835,#9b315d,#ffc1d8); }
+  #dog-card-panel .theme[data-theme="emerald"]:before { background:linear-gradient(135deg,#06231d,#0e4b3e,#c7a85b); }
+  #dog-card-panel .theme[data-theme="aurora"]:before { background:linear-gradient(135deg,#10163a,#4057c8,#a870ff); }
+  #dog-card-panel .theme[data-theme="ink"]:before { background:linear-gradient(135deg,#050505,#17120c,#3a2b13); }
+  #dog-card-panel .theme[data-theme="minimal"]:before { background:linear-gradient(135deg,#f9faff,#eef3ff,#fff); }
+  #dog-card-panel .theme[data-theme="minimal"] { color:#192033; } #dog-card-panel .theme[data-theme="minimal"] span{color:rgba(25,32,51,.56)}
+  #dog-error-panel { position: fixed; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); display:none; color:#f7f9ff; background: rgba(10,14,25,.90); border:1px solid rgba(255,255,255,.16); box-shadow:0 -12px 50px rgba(0,0,0,.42); backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4); border-radius: 24px; overflow:hidden; }
   #dog-error-panel .head { display:flex; align-items:center; justify-content:space-between; padding:14px 15px 10px; border-bottom:1px solid rgba(255,255,255,.08); }
   #dog-error-panel .head b { font-size:16px; }
   #dog-error-panel .head button { border:0; border-radius:12px; padding:7px 10px; color:#fff; background:rgba(255,255,255,.12); font-weight:700; }
@@ -25,7 +51,9 @@ enum TavernToolsScript {
   #dog-error-panel .item .d { font-size:13px; color:rgba(255,255,255,.82); line-height:1.5; white-space:pre-wrap; word-break:break-word; }
   #dog-error-panel .item .raw { margin-top:8px; color:rgba(255,255,255,.48); font-size:12px; max-height:72px; overflow:hidden; white-space:pre-wrap; }
   #dog-error-panel .item button { margin-top:9px; border:0; border-radius:999px; background:rgba(255,210,88,.18); color:#ffe087; padding:7px 10px; font-size:12px; font-weight:800; }
-  #dog-card-toast { position:fixed; left:50%; bottom:max(88px, calc(env(safe-area-inset-bottom) + 70px)); transform:translateX(-50%); display:none; color:#fff; background:rgba(10,15,25,.82); border:1px solid rgba(255,255,255,.16); border-radius:999px; padding:10px 14px; box-shadow:0 10px 28px rgba(0,0,0,.35); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); font-size:13px; font-weight:800; }
+  #dog-card-toast { position:fixed; left:50%; bottom:max(88px, calc(env(safe-area-inset-bottom) + 70px)); transform:translateX(-50%); display:none; color:#fff; background:rgba(10,15,25,.86); border:1px solid rgba(255,255,255,.16); border-radius:999px; padding:10px 14px; box-shadow:0 10px 28px rgba(0,0,0,.35); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); font-size:13px; font-weight:850; }
+  @keyframes dogPop { from { opacity:0; transform:translate(-50%, -106%) scale(.94); } to { opacity:1; transform:translate(-50%, -118%) scale(1); } }
+  @keyframes dogSlide { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
   `;
   const style = document.createElement('style');
   style.id = 'dog-lite-tools-style';
@@ -34,13 +62,18 @@ enum TavernToolsScript {
 
   const actions = document.createElement('div');
   actions.id = 'dog-actions';
-  actions.innerHTML = `<button data-act="translate">划词翻译</button><button data-act="card" class="primary">生成卡片</button>`;
+  actions.innerHTML = `<button data-act="translate">🌐 翻译</button><button data-act="card" class="primary">🔖 卡片</button><span class="count"></span>`;
   document.documentElement.appendChild(actions);
 
   const trans = document.createElement('div');
   trans.id = 'dog-translation';
-  trans.innerHTML = `<button class="close">×</button><div class="title">🌐 Edge 翻译</div><div class="body"></div>`;
+  trans.innerHTML = `<div class="top"><div class="title">🌐 Edge 翻译</div><div class="actions"><button data-copy>复制</button><button data-close>×</button></div></div><div class="label">原文</div><div class="origin"></div><div class="label">译文</div><div class="body"></div>`;
   document.documentElement.appendChild(trans);
+
+  const cardPanel = document.createElement('div');
+  cardPanel.id = 'dog-card-panel';
+  cardPanel.innerHTML = `<div class="head"><div><b>🔖 选择卡片主题</b><span>生成 DogTavern 风格分享卡</span></div><button data-close>收起</button></div><div class="themes"></div>`;
+  document.documentElement.appendChild(cardPanel);
 
   const errPanel = document.createElement('div');
   errPanel.id = 'dog-error-panel';
@@ -51,14 +84,25 @@ enum TavernToolsScript {
   toast.id = 'dog-card-toast';
   document.documentElement.appendChild(toast);
 
+  const CARD_THEMES = [
+    ['night','星夜玻璃','深蓝发光 · 通用推荐'],
+    ['cream','奶油便签','柔和浅色 · 日常摘录'],
+    ['cyber','赛博霓虹','高对比 · 科幻感'],
+    ['sakura','樱粉胶片','粉紫渐变 · 角色台词'],
+    ['emerald','墨绿诗页','稳重高级 · 文学感'],
+    ['aurora','极光蓝紫','梦幻流光 · 长文本'],
+    ['ink','黑金剧场','暗黑金色 · 戏剧感'],
+    ['minimal','极简白卡','干净清爽 · 便于阅读']
+  ];
+  cardPanel.querySelector('.themes').innerHTML = CARD_THEMES.map(([id, name, desc]) => `<button class="theme" data-theme="${id}"><b>${name}</b><span>${desc}</span></button>`).join('');
+
   let activeSelection = null;
   let requestSeq = 1;
   const callbacks = new Map();
+  const localTranslateCache = new Map();
 
   function post(action, payload) {
-    try {
-      window.webkit.messageHandlers.tavernTools.postMessage(Object.assign({ action }, payload || {}));
-    } catch (_) {}
+    try { window.webkit.messageHandlers.tavernTools.postMessage(Object.assign({ action }, payload || {})); } catch (_) {}
   }
 
   function withNative(action, payload, cb) {
@@ -68,8 +112,8 @@ enum TavernToolsScript {
   }
 
   function rectToPoint(rect) {
-    const x = Math.min(Math.max(rect.left + rect.width / 2, 26), window.innerWidth - 26);
-    const y = Math.min(Math.max(rect.top, 68), window.innerHeight - 28);
+    const x = Math.min(Math.max(rect.left + rect.width / 2, 32), window.innerWidth - 32);
+    const y = Math.min(Math.max(rect.top, 74), window.innerHeight - 40);
     return { x, y };
   }
 
@@ -77,28 +121,50 @@ enum TavernToolsScript {
     toast.textContent = text;
     toast.style.display = 'block';
     clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => toast.style.display = 'none', 1600);
+    showToast._t = setTimeout(() => toast.style.display = 'none', 1700);
   }
 
-  function showTranslationAt(text, rect, loading) {
+  function isMostlyChinese(text) {
+    const zh = (text.match(/[\u3400-\u9fff]/g) || []).length;
+    const en = (text.match(/[A-Za-z]/g) || []).length;
+    return zh >= 4 && zh >= en;
+  }
+
+  function setTranslationPanel(origin, body, rect, loading) {
     const p = rectToPoint(rect || { left: window.innerWidth / 2, top: 120, width: 1, height: 1 });
+    trans.classList.toggle('loading', !!loading);
     trans.querySelector('.title').textContent = loading ? '🌐 Edge 翻译中…' : '🌐 Edge 翻译';
-    trans.querySelector('.body').textContent = text;
+    trans.querySelector('.origin').textContent = origin || '';
+    trans.querySelector('.body').textContent = body || '';
     trans.style.left = p.x + 'px';
-    trans.style.top = Math.min(window.innerHeight - 120, p.y + 12) + 'px';
+    trans.style.top = Math.min(window.innerHeight - 210, p.y + 13) + 'px';
     trans.style.display = 'block';
   }
-
-  trans.querySelector('.close').addEventListener('click', () => trans.style.display = 'none');
-  errPanel.querySelector('[data-close]').addEventListener('click', () => errPanel.style.display = 'none');
 
   function translate(text, rect) {
     const value = (text || '').trim();
     if (!value) return;
-    showTranslationAt('正在调用 Microsoft Edge 翻译引擎…', rect, true);
+    if (isMostlyChinese(value)) {
+      setTranslationPanel(value, value, rect, false);
+      showToast('原文主要是中文，已直接显示。');
+      return;
+    }
+    const key = value.slice(0, 800) + ':' + value.length;
+    const cached = localTranslateCache.get(key);
+    if (cached) {
+      setTranslationPanel(value, cached, rect, false);
+      showToast('已使用翻译缓存');
+      return;
+    }
+    setTranslationPanel(value, '正在调用 Microsoft Edge 翻译引擎…', rect, true);
     withNative('translate', { text: value }, (res) => {
-      if (res && res.ok) showTranslationAt(res.text || '', rect, false);
-      else showTranslationAt((res && res.error) || '翻译失败，请稍后再试。', rect, false);
+      if (res && res.ok) {
+        const translated = res.text || '';
+        localTranslateCache.set(key, translated);
+        setTranslationPanel(value, translated, rect, false);
+      } else {
+        setTranslationPanel(value, (res && res.error) || '翻译失败，请稍后再试。', rect, false);
+      }
     });
   }
 
@@ -125,44 +191,62 @@ enum TavernToolsScript {
     return (el?.getAttribute?.('title') || el?.dataset?.name || el?.textContent || '').trim();
   }
 
-  function updateSelection() {
+  function currentSelectionInfo() {
     const sel = window.getSelection();
     const text = (sel && sel.toString() || '').trim();
-    if (!sel || sel.rangeCount === 0 || text.length < 2) {
-      actions.style.display = 'none';
-      activeSelection = null;
-      return;
-    }
+    if (!sel || sel.rangeCount === 0 || text.length < 2) return null;
     const range = sel.getRangeAt(0);
-    let rect = range.getBoundingClientRect();
-    if (!rect || (!rect.width && !rect.height)) {
-      rect = range.getClientRects()[0];
-    }
-    if (!rect) return;
+    const rects = Array.from(range.getClientRects()).filter(r => r && r.width > 0 && r.height > 0);
+    const rect = rects[rects.length - 1] || range.getBoundingClientRect();
+    if (!rect || (!rect.width && !rect.height)) return null;
     const mes = closestMes(range.commonAncestorContainer);
     const ai = isAIMessage(mes);
-    actions.querySelector('[data-act="card"]').style.display = ai ? '' : 'none';
-    activeSelection = { text, rect, isAI: ai, character: characterName(mes) };
-    const p = rectToPoint(rect);
+    return { text, rect, isAI: ai, character: characterName(mes), length: text.length };
+  }
+
+  function showActions(info) {
+    activeSelection = info;
+    actions.querySelector('[data-act="card"]').style.display = info.isAI ? '' : 'none';
+    actions.querySelector('.count').textContent = info.length > 80 ? `${info.length}字` : '';
+    const p = rectToPoint(info.rect);
     actions.style.left = p.x + 'px';
     actions.style.top = p.y + 'px';
     actions.style.display = 'flex';
   }
 
-  let selectionTimer = null;
-  function scheduleSelectionUpdate() {
-    clearTimeout(selectionTimer);
-    selectionTimer = setTimeout(updateSelection, 90);
+  function updateSelection(force) {
+    const info = currentSelectionInfo();
+    if (info) {
+      showActions(info);
+      return;
+    }
+    if (force) return;
+    actions.style.display = 'none';
   }
-  document.addEventListener('selectionchange', scheduleSelectionUpdate, true);
-  document.addEventListener('touchend', scheduleSelectionUpdate, true);
-  document.addEventListener('mouseup', scheduleSelectionUpdate, true);
+
+  let selectionTimer = null;
+  function scheduleSelectionUpdate(delay = 150) {
+    clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(() => updateSelection(false), delay);
+  }
+  document.addEventListener('selectionchange', () => scheduleSelectionUpdate(170), true);
+  document.addEventListener('touchend', () => scheduleSelectionUpdate(260), true);
+  document.addEventListener('mouseup', () => scheduleSelectionUpdate(120), true);
+  document.addEventListener('contextmenu', () => scheduleSelectionUpdate(80), true);
   document.addEventListener('scroll', () => { actions.style.display = 'none'; }, true);
   document.addEventListener('click', (ev) => {
-    if (!actions.contains(ev.target) && !trans.contains(ev.target) && !errPanel.contains(ev.target)) {
+    if (!actions.contains(ev.target) && !trans.contains(ev.target) && !errPanel.contains(ev.target) && !cardPanel.contains(ev.target)) {
       actions.style.display = 'none';
     }
   }, true);
+
+  trans.querySelector('[data-close]').addEventListener('click', () => trans.style.display = 'none');
+  trans.querySelector('[data-copy]').addEventListener('click', async () => {
+    const value = trans.querySelector('.body').textContent || '';
+    try { await navigator.clipboard.writeText(value); showToast('翻译已复制'); } catch (_) { showToast('复制失败，请手动长按复制'); }
+  });
+  errPanel.querySelector('[data-close]').addEventListener('click', () => errPanel.style.display = 'none');
+  cardPanel.querySelector('[data-close]').addEventListener('click', () => cardPanel.style.display = 'none');
 
   actions.addEventListener('click', (ev) => {
     const btn = ev.target.closest('button');
@@ -172,14 +256,21 @@ enum TavernToolsScript {
     if (btn.dataset.act === 'translate') {
       translate(activeSelection.text, activeSelection.rect);
     } else if (btn.dataset.act === 'card') {
-      post('makeCard', {
-        text: activeSelection.text,
-        character: activeSelection.character || 'AI Message'
-      });
-      showToast('正在生成卡片…');
-      window.getSelection()?.removeAllRanges?.();
+      cardPanel.style.display = 'block';
       actions.style.display = 'none';
     }
+  });
+
+  cardPanel.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-theme]');
+    if (!btn || !activeSelection) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const theme = btn.dataset.theme || 'night';
+    post('makeCard', { text: activeSelection.text, character: activeSelection.character || 'AI Message', theme });
+    showToast('正在生成卡片…');
+    window.getSelection()?.removeAllRanges?.();
+    cardPanel.style.display = 'none';
   });
 
   const ERROR_DICT = [
@@ -231,6 +322,7 @@ enum TavernToolsScript {
     {k:['typeerror'],t:'前端脚本错误',d:'网页脚本执行失败，可能是插件冲突或版本不兼容。'}
   ];
 
+
   function matchError(text) {
     const lower = (text || '').toLowerCase();
     return ERROR_DICT.find(e => e.k.some(key => lower.includes(key)));
@@ -270,7 +362,7 @@ enum TavernToolsScript {
     if (!items.length) {
       list.innerHTML = `<div class="item"><div class="t">没有找到明显错误码</div><div class="d">页面当前没有检测到 HTTP 错误、接口错误或网络错误。可以选中报错文字后点“划词翻译”。</div></div>`;
     } else {
-      items.forEach((it, idx) => {
+      items.forEach((it) => {
         const hit = matchError(it.text);
         const div = document.createElement('div');
         div.className = 'item';
@@ -293,13 +385,12 @@ enum TavernToolsScript {
         cb(res);
       }
     },
-    scanErrors() {
-      renderErrors(collectErrors());
-    },
+    scanErrors() { renderErrors(collectErrors()); },
     hideAll() {
       actions.style.display = 'none';
       trans.style.display = 'none';
       errPanel.style.display = 'none';
+      cardPanel.style.display = 'none';
     }
   };
 })();

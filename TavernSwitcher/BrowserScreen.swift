@@ -8,7 +8,7 @@ struct BrowserScreen: View {
     let endpoint: TavernEndpoint
 
     @StateObject private var browser = BrowserModel()
-    @State private var showControls = true
+    @State private var showControls = false
     @State private var showSettings = false
     @State private var showShare = false
     @State private var shareImage: UIImage?
@@ -365,6 +365,11 @@ private struct FloatingDock: View {
                     y: max(150, containerSize.height - 150)
                 )
             }
+            if !showControls {
+                position = snapToEdge(position)
+            }
+            UserDefaults.standard.set(position.x, forKey: "dockX")
+            UserDefaults.standard.set(position.y, forKey: "dockY")
         }
     }
 
@@ -480,9 +485,9 @@ private struct FloatingSettingsView: View {
 
 
                 Section("DogTavern 工具") {
-                    Label("选中 AI 回复文字，会浮现“划词翻译 / 生成卡片”按钮", systemImage: "textformat")
+                    Label("选中 AI 回复文字，会浮现“划词翻译 / 生成卡片”按钮，生成卡片可选多主题", systemImage: "textformat")
                     Label("错误翻译会扫描当前页面报错，并优先使用 40+ 内置错误字典", systemImage: "cross.case.fill")
-                    Label("字典未命中时，可继续调用 Microsoft Edge 翻译", systemImage: "globe")
+                    Label("翻译加入缓存、中文检测和复制按钮，重复翻译会更快", systemImage: "globe")
                 }
 
                 Section("操作说明") {
@@ -867,7 +872,8 @@ struct WebView: UIViewRepresentable {
             case "makeCard":
                 let text = payload["text"] as? String ?? ""
                 let character = payload["character"] as? String
-                let image = SelectionCardService.makeCard(text: text, character: character)
+                let theme = payload["theme"] as? String
+                let image = SelectionCardService.makeCard(text: text, character: character, theme: theme)
                 presentShare(items: [image])
                 sendTavernToolsResult(requestId: requestId, ok: true, text: "卡片已生成", error: nil)
             default:
