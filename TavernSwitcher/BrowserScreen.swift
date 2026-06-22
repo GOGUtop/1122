@@ -14,9 +14,7 @@ struct BrowserScreen: View {
     @State private var shareImage: UIImage?
     @State private var captureError: String?
     @State private var pipError: String?
-    @State private var nativeInputText = ""
-    @State private var nativeInputToast: String?
-    @FocusState private var nativeInputFocused: Bool
+    @State private var commandMessage: String?
     @State private var isSelectingRange = false
     @State private var rangeStart: CGFloat?
     @State private var rangeMessage = "请先滚到要截图的开头，然后点“设为开头”。"
@@ -73,27 +71,6 @@ struct BrowserScreen: View {
                     .zIndex(9)
                 }
 
-                if appState.nativeInputEnabled && !isSelectingRange {
-                    NativeInputBar(
-                        text: $nativeInputText,
-                        focused: $nativeInputFocused,
-                        isGenerating: browser.isGenerating,
-                        onSend: sendNativeInput
-                    )
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(8)
-                }
-
-                if let nativeInputToast {
-                    LiquidToast(text: nativeInputToast)
-                        .padding(.top, 62)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .zIndex(11)
-                }
 
                 FloatingDock(
                     showControls: $showControls,
@@ -107,6 +84,9 @@ struct BrowserScreen: View {
                     onPortal: { appState.activeEndpoint = nil },
                     onSwitch: { appState.showSwitcher = true },
                     onScreenshot: beginRangeCapture,
+                    onQuickReroll: { runTavernQuickAction(.reroll) },
+                    onCloseChat: { runTavernQuickAction(.closeChat) },
+                    onNewChat: { runTavernQuickAction(.newChat) },
                     onSettings: { showSettings = true },
                     onPictureInPicture: {
                         if browser.pictureInPicture.toggle() {
@@ -119,9 +99,17 @@ struct BrowserScreen: View {
             }
         }
         .background(Color(red: 0.025, green: 0.04, blue: 0.07))
-        .onAppear { updateScreenKeepAlive() }
-        .onDisappear { BackgroundKeepAliveService.shared.stop(reason: "screen") }
+        .onAppear {
+            updateScreenKeepAlive()
+            updateGenerationKeepAwake()
+        }
+        .onDisappear {
+            BackgroundKeepAliveService.shared.stop(reason: "screen")
+            BackgroundKeepAliveService.shared.stop(reason: "generation")
+        }
         .onChange(of: appState.enhancedKeepAlive) { _ in updateScreenKeepAlive() }
+        .onChange(of: appState.autoPreventSleep) { _ in updateGenerationKeepAwake() }
+        .onChange(of: browser.isGenerating) { _ in updateGenerationKeepAwake() }
         .sheet(isPresented: $showSettings) {
             FloatingSettingsView()
                 .environmentObject(appState)
@@ -147,6 +135,14 @@ struct BrowserScreen: View {
         } message: {
             Text(pipError ?? "")
         }
+        .alert("快捷操作", isPresented: Binding(
+            get: { commandMessage != nil },
+            set: { if !$0 { commandMessage = nil } }
+        )) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(commandMessage ?? "")
+        }
     }
 
     private func updateScreenKeepAlive() {
@@ -157,30 +153,146 @@ struct BrowserScreen: View {
         }
     }
 
-    private func sendNativeInput() {
-        let raw = nativeInputText
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        browser.sendNativeMessage(raw) { success, message in
-            if success {
-                nativeInputText = ""
-                nativeInputFocused = false
-                showNativeToast("已发送")
-            } else {
-                showNativeToast(message ?? "发送失败，请确认网页已加载完成")
+    private func updateGenerationKeepAwake() {
+        if appState.autoPreventSleep && browser.isGenerating {
+            BackgroundKeepAliveService.shared.start(reason: "generation")
+        } else {
+            BackgroundKeepAliveService.shared.stop(reason: "generation")
+        }
+    }
+
+    private enum TavernQuickAction: String {
+        case reroll
+        case closeChat
+        case newChat
+
+        var displayName: String {
+            switch self {
+            case .reroll: return "快速重Roll"
+            case .closeChat: return "关闭聊天记录"
+            case .newChat: return "新建聊天记录"
             }
         }
     }
 
-    private func showNativeToast(_ text: String) {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-            nativeInputToast = text
+    private func runTavernQuickAction(_ action: TavernQuickAction) {
+        guard let webView = browser.webView else {
+            commandMessage = "网页还没有加载完成。"
+            return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-            withAnimation(.easeOut(duration: 0.18)) {
-                if nativeInputToast == text { nativeInputToast = nil }
+        webView.evaluateJavaScript(Self.quickActionScript(action)) { result, error in
+            DispatchQueue.main.async {
+                if let error {
+                    commandMessage = "\(action.displayName)失败：\(error.localizedDescription)"
+                    return
+                }
+                let dict = result as? [String: Any]
+                let ok = dict?["ok"] as? Bool ?? false
+                let message = dict?["message"] as? String
+                if ok {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.76)) {
+                        showControls = false
+                    }
+                } else {
+                    commandMessage = message ?? "没有找到可点击的\(action.displayName)按钮。请先确认酒馆页面已完全加载。"
+                }
             }
         }
+    }
+
+    private static func quickActionScript(_ action: TavernQuickAction) -> String {
+        let raw = action.rawValue
+        return """
+        (() => {
+          const action = '\(raw)';
+          const visible = el => {
+            if (!el) return false;
+            const style = getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0 && !el.disabled;
+          };
+          const click = el => {
+            if (!visible(el)) return false;
+            try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
+            try { el.focus?.(); } catch (_) {}
+            ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(type => {
+              try { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window })); } catch (_) {}
+            });
+            return true;
+          };
+          const candidates = (selectors) => {
+            const result = [];
+            for (const selector of selectors) {
+              try { document.querySelectorAll(selector).forEach(el => result.push(el)); } catch (_) {}
+            }
+            return result;
+          };
+          const byText = terms => {
+            const nodes = Array.from(document.querySelectorAll('button, .menu_button, .list-group-item, [role="button"], a, div, span'))
+              .filter(visible);
+            return nodes.filter(el => {
+              const hay = `${el.innerText || ''} ${el.textContent || ''} ${el.title || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase();
+              return terms.some(term => hay.includes(term.toLowerCase()));
+            });
+          };
+          const clickAny = (selectors, terms) => {
+            const all = [...candidates(selectors), ...byText(terms)];
+            const unique = all.filter((el, index) => all.indexOf(el) === index);
+            for (const el of unique) {
+              if (click(el)) return true;
+            }
+            return false;
+          };
+          const tryContext = (names) => {
+            try {
+              const ctx = window.SillyTavern?.getContext?.();
+              for (const name of names) {
+                const fn = ctx?.[name] || window[name];
+                if (typeof fn === 'function') {
+                  try { fn.call(ctx); return true; } catch (_) {}
+                }
+              }
+            } catch (_) {}
+            return false;
+          };
+
+          if (action === 'reroll') {
+            if (tryContext(['regenerate', 'reroll', 'doRegenerate'])) return { ok: true, message: '已触发快速重Roll' };
+            const ok = clickAny([
+              '#option_regenerate', '#option_regenerate_button', '#regenerate_button', '#mes_regenerate',
+              '.mes_regenerate', '.swipe_right', '.fa-rotate-right', '.fa-repeat',
+              '[title*="Regenerate" i]', '[aria-label*="Regenerate" i]', '[title*="Reroll" i]', '[aria-label*="Reroll" i]',
+              '[title*="重新生成" i]', '[aria-label*="重新生成" i]', '[title*="重Roll" i]', '[aria-label*="重Roll" i]'
+            ], ['Regenerate', 'Reroll', '重新生成', '重生成', '重 Roll', '重Roll']);
+            return ok ? { ok: true, message: '已触发快速重Roll' } : { ok: false, message: '没有找到快速重Roll按钮。' };
+          }
+
+          if (action === 'newChat') {
+            if (tryContext(['createNewChat', 'newChat', 'doNewChat'])) return { ok: true, message: '已触发新建聊天记录' };
+            const ok = clickAny([
+              '#option_new_chat', '#new_chat', '#new_chat_button', '#create_new_chat', '#newChat',
+              '[title*="New Chat" i]', '[aria-label*="New Chat" i]',
+              '[title*="新聊天" i]', '[aria-label*="新聊天" i]', '[title*="新建聊天" i]', '[aria-label*="新建聊天" i]',
+              '[title*="新建记录" i]', '[aria-label*="新建记录" i]'
+            ], ['New Chat', '新聊天', '新建聊天', '新建记录']);
+            return ok ? { ok: true, message: '已触发新建聊天记录' } : { ok: false, message: '没有找到新建聊天记录按钮。' };
+          }
+
+          if (action === 'closeChat') {
+            const closeTerms = ['关闭聊天记录', '关闭聊天', '关闭记录', 'Close Chat', 'Close chat history', 'Close'];
+            const closeSelectors = [
+              '#chat_history_close', '#close_chat', '#closeChat', '#chat_panel_close', '#rm_button_close_chats',
+              '.drawer-close', '.popup-close', '.drawer .close', '.popup .close',
+              '[title*="Close Chat" i]', '[aria-label*="Close Chat" i]',
+              '[title*="关闭聊天" i]', '[aria-label*="关闭聊天" i]', '[title*="关闭记录" i]', '[aria-label*="关闭记录" i]'
+            ];
+            const ok = clickAny(closeSelectors, closeTerms);
+            return ok ? { ok: true, message: '已触发关闭聊天记录' } : { ok: false, message: '没有找到关闭聊天记录按钮。这个按钮不会执行删除操作。' };
+          }
+
+          return { ok: false, message: '未知快捷操作。' };
+        })();
+        """
     }
 
     private func beginRangeCapture() {
@@ -296,105 +408,6 @@ private struct RangeCaptureBar: View {
 }
 
 
-private struct NativeInputBar: View {
-    @Binding var text: String
-    var focused: FocusState<Bool>.Binding
-    let isGenerating: Bool
-    let onSend: () -> Void
-
-    private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isGenerating
-    }
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            ZStack(alignment: .topLeading) {
-                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(isGenerating ? "AI 正在回复中…" : "输入消息，直接发送到酒馆")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.45))
-                        .padding(.horizontal, 17)
-                        .padding(.vertical, 15)
-                        .allowsHitTesting(false)
-                }
-                TextEditor(text: $text)
-                    .focused(focused)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(.white)
-                    .tint(Color(red: 0.78, green: 0.90, blue: 1.0))
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 42, maxHeight: 96)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-            }
-            .background(
-                LinearGradient(
-                    colors: [.white.opacity(0.18), .white.opacity(0.08), .white.opacity(0.04)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                in: RoundedRectangle(cornerRadius: 26, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .stroke(.white.opacity(0.22), lineWidth: 1)
-            )
-
-            Button(action: onSend) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: canSend
-                                    ? [Color(red: 0.48, green: 0.82, blue: 1.0), Color(red: 0.25, green: 0.48, blue: 1.0)]
-                                    : [.white.opacity(0.18), .white.opacity(0.08)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    Image(systemName: isGenerating ? "hourglass" : "paperplane.fill")
-                        .font(.system(size: 18, weight: .black))
-                        .foregroundStyle(canSend ? .white : .white.opacity(0.45))
-                }
-                .frame(width: 52, height: 52)
-                .shadow(color: canSend ? Color.blue.opacity(0.38) : .clear, radius: 12, y: 5)
-            }
-            .disabled(!canSend)
-        }
-        .padding(.leading, 12)
-        .padding(.trailing, 10)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 34, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .stroke(
-                    LinearGradient(
-                        colors: [.white.opacity(0.42), .white.opacity(0.10)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        )
-        .shadow(color: .black.opacity(0.24), radius: 20, y: 10)
-    }
-}
-
-private struct LiquidToast: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 14, weight: .heavy))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 11)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.26)))
-            .shadow(color: .black.opacity(0.28), radius: 14, y: 8)
-    }
-}
-
 
 private struct FloatingDock: View {
     @Binding var showControls: Bool
@@ -410,6 +423,9 @@ private struct FloatingDock: View {
     let onPortal: () -> Void
     let onSwitch: () -> Void
     let onScreenshot: () -> Void
+    let onQuickReroll: () -> Void
+    let onCloseChat: () -> Void
+    let onNewChat: () -> Void
     let onSettings: () -> Void
     let onPictureInPicture: () -> Void
 
@@ -489,11 +505,18 @@ private struct FloatingDock: View {
                 .foregroundStyle(.white.opacity(0.9))
             }
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 9) {
-                liquidTool("选区截图", "rectangle.and.text.magnifyingglass", action: onScreenshot)
-                liquidTool("画中画", "pip.fill", action: onPictureInPicture)
-                liquidTool("切换云洞", "arrow.triangle.2.circlepath", action: onSwitch)
-                liquidTool("设置", "slider.horizontal.3", action: onSettings)
+            VStack(spacing: 9) {
+                liquidWideTool("快速重Roll", "arrow.triangle.2.circlepath", action: onQuickReroll)
+                HStack(spacing: 9) {
+                    liquidTool("关闭记录", "xmark.message.fill", action: onCloseChat)
+                    liquidTool("新建记录", "plus.message.fill", action: onNewChat)
+                }
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 9) {
+                    liquidTool("选区截图", "rectangle.and.text.magnifyingglass", action: onScreenshot)
+                    liquidTool("画中画", "pip.fill", action: onPictureInPicture)
+                    liquidTool("切换云洞", "arrow.triangle.2.circlepath", action: onSwitch)
+                    liquidTool("设置", "slider.horizontal.3", action: onSettings)
+                }
             }
 
             HStack(spacing: 8) {
@@ -573,6 +596,36 @@ private struct FloatingDock: View {
             LongPressGesture(minimumDuration: 0.35)
                 .onEnded { _ in onPictureInPicture() }
         )
+    }
+
+    private func liquidWideTool(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .heavy))
+                    .frame(width: 28, height: 28)
+                    .background(.white.opacity(0.14), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .heavy))
+                    Text("回复结束后可直接重新生成")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.58))
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundStyle(Color(red: 1, green: 0.85, blue: 0.36))
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 54)
+            .background(
+                LinearGradient(colors: [Color.blue.opacity(0.28), .white.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: 19, style: .continuous)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous).stroke(.white.opacity(0.16)))
+        }
+        .buttonStyle(PressableButtonStyle())
     }
 
     private func liquidTool(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
@@ -669,24 +722,18 @@ private struct FloatingSettingsView: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 14) {
-                        settingsCard("原生输入栏", systemImage: "keyboard") {
-                            Toggle("启用底部原生输入栏", isOn: Binding(
-                                get: { appState.nativeInputEnabled },
-                                set: { appState.saveNativeInputEnabled($0) }
-                            ))
-                            .tint(Color(red: 0.45, green: 0.78, blue: 1.0))
-                            Text("开启后可以直接用 App 底部输入框发送消息，不再依赖网页右下角按钮。")
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.62))
-                        }
-
                         settingsCard("后台保活", systemImage: "bolt.heart.fill") {
                             Toggle("增强后台保活", isOn: Binding(
                                 get: { appState.enhancedKeepAlive },
                                 set: { appState.saveEnhancedKeepAlive($0) }
                             ))
                             .tint(Color(red: 0.45, green: 0.78, blue: 1.0))
-                            Text("会维持静音音频心跳和短时后台任务。iOS 仍可能限制长时间后台，但比普通 WebView 更稳。")
+                            Toggle("生成时自动防息屏", isOn: Binding(
+                                get: { appState.autoPreventSleep },
+                                set: { appState.saveAutoPreventSleep($0) }
+                            ))
+                            .tint(Color(red: 0.45, green: 0.78, blue: 1.0))
+                            Text("生成中会保持屏幕常亮，并维持静音音频心跳和短时后台任务。iOS 仍可能限制超长后台，但比普通 WebView 更稳。")
                                 .font(.caption)
                                 .foregroundStyle(.white.opacity(0.62))
                         }
@@ -819,56 +866,7 @@ final class BrowserModel: ObservableObject {
     let liveBridge = LiveReplyBridge()
     weak var webView: WKWebView?
 
-    func sendNativeMessage(_ text: String, completion: @escaping (Bool, String?) -> Void) {
-        guard let webView else {
-            completion(false, "网页还没加载完成")
-            return
-        }
-        guard let data = try? JSONSerialization.data(withJSONObject: text, options: [.fragmentsAllowed]),
-              let json = String(data: data, encoding: .utf8) else {
-            completion(false, "文本编码失败")
-            return
-        }
 
-        let script = """
-        (async () => {
-          const text = \(json);
-          const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-          const textarea = document.querySelector('#send_textarea, textarea[name="text"], textarea');
-          if (!textarea) return { ok: false, error: '未找到酒馆输入框' };
-          textarea.focus();
-          const proto = window.HTMLTextAreaElement && Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
-          if (proto && proto.set) proto.set.call(textarea, text); else textarea.value = text;
-          try {
-            textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
-          } catch (_) {
-            textarea.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-          textarea.dispatchEvent(new Event('change', { bubbles: true }));
-          await sleep(90);
-          const send = document.querySelector('#send_but, button[title*="发送"], button[aria-label*="发送"], button[title*="Send"], button[aria-label*="Send"]');
-          if (!send) return { ok: false, error: '未找到发送按钮' };
-          if (send.disabled) return { ok: false, error: '发送按钮暂不可用' };
-          send.click();
-          return { ok: true };
-        })();
-        """
-
-        webView.evaluateJavaScript(script) { result, error in
-            Task { @MainActor in
-                if let error {
-                    completion(false, error.localizedDescription)
-                    return
-                }
-                if let dict = result as? [String: Any] {
-                    let ok = dict["ok"] as? Bool ?? false
-                    completion(ok, dict["error"] as? String)
-                } else {
-                    completion(false, "发送脚本没有返回结果")
-                }
-            }
-        }
-    }
 }
 
 struct WebView: UIViewRepresentable {
@@ -964,8 +962,7 @@ struct WebView: UIViewRepresentable {
             style.id = 'tavern-ios-comfort-style';
             document.head.appendChild(style);
           }
-          const nativeInput = \(bottom > 80 ? "true" : "false");
-          document.body.classList.toggle('tavern-ios-native-input', nativeInput);
+          document.body.classList.remove('tavern-ios-native-input');
           style.textContent = `
             :root { --tavern-ios-bottom: ${bottom}; }
             body { padding-bottom: max(10px, var(--tavern-ios-bottom)) !important; }
@@ -973,14 +970,6 @@ struct WebView: UIViewRepresentable {
               bottom: max(10px, env(safe-area-inset-bottom)) !important;
               margin-bottom: max(var(--tavern-ios-bottom), env(safe-area-inset-bottom)) !important;
               padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
-            }
-            body.tavern-ios-native-input #send_form,
-            body.tavern-ios-native-input #form_sheld,
-            body.tavern-ios-native-input .send_form,
-            body.tavern-ios-native-input form:has(#send_textarea) {
-              opacity: 0.02 !important;
-              pointer-events: none !important;
-              transform: translateY(88px) !important;
             }
             #send_but, #mes_stop, button[title*="发送"], button[aria-label*="发送"], button[title*="Send"], button[aria-label*="Send"] {
               min-width: 46px !important;

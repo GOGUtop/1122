@@ -27,8 +27,8 @@ final class AppState: ObservableObject {
     @Published var floatingOpacity = UserDefaults.standard.object(forKey: "floatingOpacity") as? Double ?? 0.88
     @Published var pageZoom = UserDefaults.standard.object(forKey: "pageZoom") as? Double ?? 0.94
     @Published var bottomSafePadding = UserDefaults.standard.object(forKey: "bottomSafePadding") as? Double ?? 26
-    @Published var nativeInputEnabled = UserDefaults.standard.object(forKey: "nativeInputEnabled") as? Bool ?? true
     @Published var enhancedKeepAlive = UserDefaults.standard.object(forKey: "enhancedKeepAlive") as? Bool ?? true
+    @Published var autoPreventSleep = UserDefaults.standard.object(forKey: "autoPreventSleep") as? Bool ?? true
 
     private let lastPortKey = "lastEndpointPort"
 
@@ -72,18 +72,18 @@ final class AppState: ObservableObject {
         UserDefaults.standard.set(value, forKey: "bottomSafePadding")
     }
 
-    func saveNativeInputEnabled(_ value: Bool) {
-        nativeInputEnabled = value
-        UserDefaults.standard.set(value, forKey: "nativeInputEnabled")
-    }
-
     func saveEnhancedKeepAlive(_ value: Bool) {
         enhancedKeepAlive = value
         UserDefaults.standard.set(value, forKey: "enhancedKeepAlive")
     }
 
+    func saveAutoPreventSleep(_ value: Bool) {
+        autoPreventSleep = value
+        UserDefaults.standard.set(value, forKey: "autoPreventSleep")
+    }
+
     var webBottomPadding: Double {
-        bottomSafePadding + (nativeInputEnabled ? 96 : 0)
+        bottomSafePadding
     }
 
 }

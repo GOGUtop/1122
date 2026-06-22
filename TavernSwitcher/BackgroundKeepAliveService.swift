@@ -8,12 +8,14 @@ final class BackgroundKeepAliveService {
     private var player: AVAudioPlayer?
     private var reasons = Set<String>()
     private var heartbeatTimer: Timer?
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     func start(reason: String) {
         reasons.insert(reason)
         configureSession()
         ensurePlayer()
         player?.play()
+        beginBackgroundTaskIfNeeded()
         startHeartbeatIfNeeded()
         UIApplication.shared.isIdleTimerDisabled = true
     }
@@ -24,6 +26,7 @@ final class BackgroundKeepAliveService {
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
         player?.stop()
+        endBackgroundTask()
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
@@ -34,6 +37,7 @@ final class BackgroundKeepAliveService {
         if player?.isPlaying != true {
             player?.play()
         }
+        beginBackgroundTaskIfNeeded()
         UIApplication.shared.isIdleTimerDisabled = true
     }
 
@@ -45,13 +49,28 @@ final class BackgroundKeepAliveService {
 
     private func startHeartbeatIfNeeded() {
         guard heartbeatTimer == nil else { return }
-        let timer = Timer.scheduledTimer(withTimeInterval: 9, repeats: true) { _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: 7, repeats: true) { _ in
             Task { @MainActor in
                 BackgroundKeepAliveService.shared.refresh()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         heartbeatTimer = timer
+    }
+
+    private func beginBackgroundTaskIfNeeded() {
+        guard backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "TavernKeepAlive") { [weak self] in
+            Task { @MainActor in
+                self?.endBackgroundTask()
+            }
+        }
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
     }
 
     private func ensurePlayer() {
