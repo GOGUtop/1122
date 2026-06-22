@@ -1,5 +1,6 @@
 import UIKit
 import UserNotifications
+import AudioToolbox
 
 @MainActor
 final class ReplyNotificationService {
@@ -12,6 +13,7 @@ final class ReplyNotificationService {
     private var lastFinishAt: Date?
     private var lastMappedBannerAt: Date?
     private let duplicateSuppressionWindow: TimeInterval = 8
+    private let mirrorSuppressionWindow: TimeInterval = 8
 
     func generationStarted(id: String) {
         // 系统提醒不再由三路检测直接触发；这里只负责维持后台活跃和生成周期锁。
@@ -48,7 +50,7 @@ final class ReplyNotificationService {
     func mirrorPiPBannerToSystem(id: String, outcome: ReplyOutcome) {
         guard UserDefaults.standard.object(forKey: "mirrorPiPAlertToBanner") as? Bool ?? true else { return }
         guard !mirroredBannerIds.contains(id) else { return }
-        if let lastMappedBannerAt, Date().timeIntervalSince(lastMappedBannerAt) < 3.0 {
+        if let lastMappedBannerAt, Date().timeIntervalSince(lastMappedBannerAt) < mirrorSuppressionWindow {
             return
         }
 
@@ -59,9 +61,13 @@ final class ReplyNotificationService {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional || settings.authorizationStatus == .ephemeral else {
-                center.requestAuthorization(options: [.alert, .badge]) { _, _ in }
+                center.requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
                 return
             }
+
+            // 只由画中画完成状态条映射一次系统横幅；这里统一附带一次系统提示音/震动。
+            // iOS 没有可靠的后台“只震动不响铃”接口，通知震动通常跟随系统提示音设置。
+            AudioServicesPlaySystemSound(SystemSoundID(kSystemSoundID_Vibrate))
 
             let content = UNMutableNotificationContent()
             content.title = outcome.bannerTitle
@@ -69,9 +75,9 @@ final class ReplyNotificationService {
             content.categoryIdentifier = "TAVERN_REPLY_RESULT"
             content.threadIdentifier = "TAVERN_REPLY_RESULT"
             content.interruptionLevel = .active
-            content.sound = nil
+            content.sound = .default
 
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.25, repeats: false)
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.18, repeats: false)
             let request = UNNotificationRequest(
                 identifier: "pip-result-\(id)",
                 content: content,
@@ -91,7 +97,7 @@ final class ReplyNotificationService {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             guard settings.authorizationStatus == .notDetermined else { return }
-            center.requestAuthorization(options: [.alert, .badge]) { _, _ in }
+            center.requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
         }
     }
 

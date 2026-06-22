@@ -468,21 +468,21 @@ private struct FloatingSettingsView: View {
 
                 Section("画中画完成提示") {
                     Toggle("画中画提示同步为系统横幅", isOn: $mirrorPiPAlertToBanner)
-                    Button("测试顶部横幅") {
+                    Button("测试顶部横幅和震动") {
                         ReplyNotificationService.shared.sendBannerTest()
                     }
-                    Label("声音和震动仍保持关闭", systemImage: "bell.slash.fill")
                     Label("只有画中画状态条出现时才会映射一次横幅", systemImage: "pip.fill")
-                    Text("这个模式不会再让酒馆原生事件、服务端桥接和后台轮询各弹一次。系统横幅是否从顶部弹出，仍受 iPhone 设置 → 通知 → 云洞酒馆 → 横幅 控制。")
+                    Label("横幅会跟随系统通知设置触发一次默认提示音 / 震动", systemImage: "iphone.radiowaves.left.and.right")
+                    Text("这个模式不会再让酒馆原生事件、服务端桥接和后台轮询各弹一次。顶部横幅和震动仍受 iPhone 设置 → 通知 → 云洞酒馆 的声音、横幅、静音模式影响。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-
-                Section("DogTavern 工具") {
-                    Label("选中 AI 回复文字，会在底部浮现“翻译 / 生成卡片”按钮，不再顶到 iOS 原生菜单", systemImage: "textformat")
-                    Label("红色报错弹窗出现时会自动翻译，不需要再手动点错误翻译", systemImage: "cross.case.fill")
-                    Label("卡片生成加入回调提示和更稳的分享面板打开方式", systemImage: "photo.on.rectangle")
+                Section("已关闭的不稳定工具") {
+                    Label("已移除划词翻译、生成卡片和红色报错自动翻译，避免点了没反应或遮挡原生菜单", systemImage: "trash")
+                    Text("目前保留稳定功能：画中画、完成状态条、横幅映射、选区长截图和悬浮球工具。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("操作说明") {
