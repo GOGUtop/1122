@@ -14,6 +14,9 @@ struct BrowserScreen: View {
     @State private var shareImage: UIImage?
     @State private var captureError: String?
     @State private var pipError: String?
+    @State private var nativeInputText = ""
+    @State private var nativeInputToast: String?
+    @FocusState private var nativeInputFocused: Bool
     @State private var isSelectingRange = false
     @State private var rangeStart: CGFloat?
     @State private var rangeMessage = "请先滚到要截图的开头，然后点“设为开头”。"
@@ -28,9 +31,10 @@ struct BrowserScreen: View {
                 WebView(
                     url: endpoint.url,
                     browser: browser,
-                    reloadToken: appState.reloadToken
+                    reloadToken: appState.reloadToken,
+                    pageZoom: appState.pageZoom,
+                    bottomSafePadding: appState.webBottomPadding
                 )
-                .ignoresSafeArea(edges: .bottom)
 
                 if browser.isLoading {
                     ProgressView(value: browser.progress)
@@ -69,6 +73,28 @@ struct BrowserScreen: View {
                     .zIndex(9)
                 }
 
+                if appState.nativeInputEnabled && !isSelectingRange {
+                    NativeInputBar(
+                        text: $nativeInputText,
+                        focused: $nativeInputFocused,
+                        isGenerating: browser.isGenerating,
+                        onSend: sendNativeInput
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(8)
+                }
+
+                if let nativeInputToast {
+                    LiquidToast(text: nativeInputToast)
+                        .padding(.top, 62)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(11)
+                }
+
                 FloatingDock(
                     showControls: $showControls,
                     position: $dockPosition,
@@ -93,6 +119,9 @@ struct BrowserScreen: View {
             }
         }
         .background(Color(red: 0.025, green: 0.04, blue: 0.07))
+        .onAppear { updateScreenKeepAlive() }
+        .onDisappear { BackgroundKeepAliveService.shared.stop(reason: "screen") }
+        .onChange(of: appState.enhancedKeepAlive) { _ in updateScreenKeepAlive() }
         .sheet(isPresented: $showSettings) {
             FloatingSettingsView()
                 .environmentObject(appState)
@@ -117,6 +146,40 @@ struct BrowserScreen: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(pipError ?? "")
+        }
+    }
+
+    private func updateScreenKeepAlive() {
+        if appState.enhancedKeepAlive {
+            BackgroundKeepAliveService.shared.start(reason: "screen")
+        } else {
+            BackgroundKeepAliveService.shared.stop(reason: "screen")
+        }
+    }
+
+    private func sendNativeInput() {
+        let raw = nativeInputText
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        browser.sendNativeMessage(raw) { success, message in
+            if success {
+                nativeInputText = ""
+                nativeInputFocused = false
+                showNativeToast("已发送")
+            } else {
+                showNativeToast(message ?? "发送失败，请确认网页已加载完成")
+            }
+        }
+    }
+
+    private func showNativeToast(_ text: String) {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+            nativeInputToast = text
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            withAnimation(.easeOut(duration: 0.18)) {
+                if nativeInputToast == text { nativeInputToast = nil }
+            }
         }
     }
 
@@ -232,6 +295,107 @@ private struct RangeCaptureBar: View {
     }
 }
 
+
+private struct NativeInputBar: View {
+    @Binding var text: String
+    var focused: FocusState<Bool>.Binding
+    let isGenerating: Bool
+    let onSend: () -> Void
+
+    private var canSend: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isGenerating
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            ZStack(alignment: .topLeading) {
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(isGenerating ? "AI 正在回复中…" : "输入消息，直接发送到酒馆")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .padding(.horizontal, 17)
+                        .padding(.vertical, 15)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $text)
+                    .focused(focused)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.white)
+                    .tint(Color(red: 0.78, green: 0.90, blue: 1.0))
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 42, maxHeight: 96)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+            }
+            .background(
+                LinearGradient(
+                    colors: [.white.opacity(0.18), .white.opacity(0.08), .white.opacity(0.04)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: 26, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .stroke(.white.opacity(0.22), lineWidth: 1)
+            )
+
+            Button(action: onSend) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: canSend
+                                    ? [Color(red: 0.48, green: 0.82, blue: 1.0), Color(red: 0.25, green: 0.48, blue: 1.0)]
+                                    : [.white.opacity(0.18), .white.opacity(0.08)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    Image(systemName: isGenerating ? "hourglass" : "paperplane.fill")
+                        .font(.system(size: 18, weight: .black))
+                        .foregroundStyle(canSend ? .white : .white.opacity(0.45))
+                }
+                .frame(width: 52, height: 52)
+                .shadow(color: canSend ? Color.blue.opacity(0.38) : .clear, radius: 12, y: 5)
+            }
+            .disabled(!canSend)
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 34, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 34, style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [.white.opacity(0.42), .white.opacity(0.10)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        )
+        .shadow(color: .black.opacity(0.24), radius: 20, y: 10)
+    }
+}
+
+private struct LiquidToast: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 14, weight: .heavy))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 11)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.26)))
+            .shadow(color: .black.opacity(0.28), radius: 14, y: 8)
+    }
+}
+
+
 private struct FloatingDock: View {
     @Binding var showControls: Bool
     @Binding var position: CGPoint
@@ -250,186 +414,228 @@ private struct FloatingDock: View {
     let onPictureInPicture: () -> Void
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 9) {
+        VStack(alignment: .trailing, spacing: 12) {
             if showControls {
-                VStack(spacing: 10) {
-                    HStack(spacing: 8) {
-                        dockButton("chevron.backward", disabled: !canGoBack, action: onBack)
-                        dockButton("arrow.clockwise", action: onReload)
-                        dockButton("house.fill", action: onPortal)
-                        dockButton("gearshape.fill", action: onSettings)
-                    }
-                    .padding(7)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay(Capsule().stroke(.white.opacity(0.18)))
-
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                        dockToolButton("选区截图", "rectangle.and.text.magnifyingglass", action: onScreenshot)
-                        dockToolButton("画中画", "pip", action: onPictureInPicture)
-                        dockToolButton("切换", "arrow.triangle.2.circlepath", action: onSwitch)
-                    }
-                    .frame(width: 218)
-                }
-                .transition(.scale.combined(with: .opacity))
+                liquidPanel
+                    .transition(.scale(scale: 0.88, anchor: .bottomTrailing).combined(with: .opacity))
             }
 
-            ZStack {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                Color.white.opacity(0.92),
-                                Color(red: 0.42, green: 0.76, blue: 1.0).opacity(0.55),
-                                Color(red: 0.10, green: 0.16, blue: 0.32).opacity(0.92),
-                                Color.black.opacity(0.92)
-                            ],
-                            center: .topLeading,
-                            startRadius: 2,
-                            endRadius: 58
-                        )
-                    )
-                Circle()
-                    .strokeBorder(.white.opacity(0.34), lineWidth: 1)
-                Circle()
-                    .trim(from: 0.08, to: isGenerating ? 0.92 : 0.62)
-                    .stroke(
-                        isGenerating ? Color.green : Color(red: 1, green: 0.78, blue: 0.26),
-                        style: StrokeStyle(lineWidth: 3.2, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-                    .padding(4)
-                Image(systemName: isGenerating ? "sparkles" : (showControls ? "xmark" : "pawprint.fill"))
-                    .font(.system(size: 22, weight: .black))
-                    .foregroundStyle(isGenerating ? .green : Color(red: 1, green: 0.88, blue: 0.48))
-            }
-            .frame(width: 62, height: 62)
-            .shadow(color: .black.opacity(0.38), radius: 14, y: 7)
-            .contentShape(Circle())
-            .onTapGesture {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) {
-                    showControls.toggle()
-                    if showControls {
-                        position = openMenuPosition(from: position)
-                    } else {
-                        position = snapToEdge(position)
-                    }
-                }
-                UserDefaults.standard.set(position.x, forKey: "dockX")
-                UserDefaults.standard.set(position.y, forKey: "dockY")
-            }
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.35)
-                    .onEnded { _ in onPictureInPicture() }
-            )
+            liquidOrb
         }
         .opacity(opacity)
         .position(resolvedPosition)
         .gesture(
             DragGesture(minimumDistance: 4)
                 .onChanged { value in
-                    if dragStart == nil {
-                        dragStart = position
-                    }
+                    if dragStart == nil { dragStart = position }
                     guard let dragStart else { return }
                     position = clamped(
-                        CGPoint(
-                            x: dragStart.x + value.translation.width,
-                            y: dragStart.y + value.translation.height
-                        )
+                        CGPoint(x: dragStart.x + value.translation.width,
+                                y: dragStart.y + value.translation.height)
                     )
                 }
                 .onEnded { value in
                     if let dragStart {
                         let raw = clamped(
-                            CGPoint(
-                                x: dragStart.x + value.translation.width,
-                                y: dragStart.y + value.translation.height
-                            )
+                            CGPoint(x: dragStart.x + value.translation.width,
+                                    y: dragStart.y + value.translation.height)
                         )
-                        position = showControls ? raw : snapToEdge(raw)
+                        position = showControls ? openMenuPosition(from: raw) : snapToEdge(raw)
                     }
                     dragStart = nil
-                    UserDefaults.standard.set(position.x, forKey: "dockX")
-                    UserDefaults.standard.set(position.y, forKey: "dockY")
+                    savePosition()
                 }
         )
         .onAppear {
             if position.x <= 1 || position.y <= 1 {
-                position = CGPoint(
-                    x: max(42, containerSize.width - 42),
-                    y: max(150, containerSize.height - 150)
-                )
+                position = CGPoint(x: max(42, containerSize.width - 42), y: max(150, containerSize.height - 170))
             }
-            if !showControls {
-                position = snapToEdge(position)
-            }
-            UserDefaults.standard.set(position.x, forKey: "dockX")
-            UserDefaults.standard.set(position.y, forKey: "dockY")
+            if !showControls { position = snapToEdge(position) }
+            savePosition()
         }
     }
 
-    private var resolvedPosition: CGPoint {
-        clamped(position)
+    private var liquidPanel: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 11) {
+                ZStack {
+                    Circle()
+                        .fill(isGenerating ? Color.green.opacity(0.2) : Color.orange.opacity(0.20))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: isGenerating ? "sparkles" : "pawprint.fill")
+                        .font(.system(size: 15, weight: .black))
+                        .foregroundStyle(isGenerating ? .green : Color(red: 1, green: 0.86, blue: 0.44))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("云洞工具")
+                        .font(.system(size: 16, weight: .heavy, design: .rounded))
+                    Text(isGenerating ? "AI 正在回复中" : "液态快捷面板")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.58))
+                }
+                Spacer()
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.76)) {
+                        showControls = false
+                        position = snapToEdge(position)
+                    }
+                    savePosition()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .black))
+                        .frame(width: 31, height: 31)
+                        .background(.white.opacity(0.13), in: Circle())
+                }
+                .foregroundStyle(.white.opacity(0.9))
+            }
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 9) {
+                liquidTool("选区截图", "rectangle.and.text.magnifyingglass", action: onScreenshot)
+                liquidTool("画中画", "pip.fill", action: onPictureInPicture)
+                liquidTool("切换云洞", "arrow.triangle.2.circlepath", action: onSwitch)
+                liquidTool("设置", "slider.horizontal.3", action: onSettings)
+            }
+
+            HStack(spacing: 8) {
+                liquidMini("chevron.backward", disabled: !canGoBack, action: onBack)
+                liquidMini("arrow.clockwise", action: onReload)
+                liquidMini("house.fill", action: onPortal)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(15)
+        .frame(width: 258)
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 32, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: 32, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [.white.opacity(0.18), .white.opacity(0.055), Color.blue.opacity(0.05)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .stroke(
+                    LinearGradient(colors: [.white.opacity(0.45), .white.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: 1
+                )
+        )
+        .shadow(color: .black.opacity(0.34), radius: 28, x: 0, y: 14)
     }
+
+    private var liquidOrb: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            .white.opacity(0.95),
+                            Color(red: 0.58, green: 0.85, blue: 1.0).opacity(0.60),
+                            Color(red: 0.11, green: 0.17, blue: 0.34).opacity(0.96),
+                            .black.opacity(0.94)
+                        ],
+                        center: .topLeading,
+                        startRadius: 2,
+                        endRadius: 60
+                    )
+                )
+            Circle()
+                .strokeBorder(.white.opacity(0.35), lineWidth: 1)
+            Circle()
+                .trim(from: 0.08, to: isGenerating ? 0.94 : 0.64)
+                .stroke(
+                    isGenerating ? Color.green : Color(red: 1, green: 0.78, blue: 0.26),
+                    style: StrokeStyle(lineWidth: 3.4, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+                .padding(4)
+            Image(systemName: showControls ? "xmark" : (isGenerating ? "sparkles" : "drop.fill"))
+                .font(.system(size: 22, weight: .black))
+                .foregroundStyle(isGenerating ? .green : Color(red: 1, green: 0.88, blue: 0.48))
+        }
+        .frame(width: 62, height: 62)
+        .shadow(color: .black.opacity(0.38), radius: 15, y: 8)
+        .contentShape(Circle())
+        .onTapGesture {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) {
+                showControls.toggle()
+                position = showControls ? openMenuPosition(from: position) : snapToEdge(position)
+            }
+            savePosition()
+        }
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.35)
+                .onEnded { _ in onPictureInPicture() }
+        )
+    }
+
+    private func liquidTool(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .heavy))
+                    .frame(width: 24, height: 24)
+                    .background(.white.opacity(0.12), in: Circle())
+                Text(title)
+                    .font(.system(size: 12, weight: .heavy))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 48)
+            .background(
+                LinearGradient(colors: [.white.opacity(0.18), .white.opacity(0.06)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: 17, style: .continuous)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).stroke(.white.opacity(0.14)))
+        }
+        .buttonStyle(PressableButtonStyle())
+    }
+
+    private func liquidMini(_ icon: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .black))
+                .frame(maxWidth: .infinity)
+                .frame(height: 38)
+                .background(.white.opacity(disabled ? 0.05 : 0.13), in: Capsule())
+                .overlay(Capsule().stroke(.white.opacity(0.12)))
+        }
+        .disabled(disabled)
+        .foregroundStyle(disabled ? .white.opacity(0.28) : .white)
+        .buttonStyle(PressableButtonStyle())
+    }
+
+    private var resolvedPosition: CGPoint { clamped(position) }
 
     private func clamped(_ point: CGPoint) -> CGPoint {
         CGPoint(
             x: min(max(point.x, 42), max(42, containerSize.width - 42)),
-            y: min(max(point.y, 85), max(85, containerSize.height - 85))
+            y: min(max(point.y, 85), max(85, containerSize.height - 110))
         )
     }
 
     private func snapToEdge(_ point: CGPoint) -> CGPoint {
         let leftX: CGFloat = 42
         let rightX = max(42, containerSize.width - 42)
-        return CGPoint(
-            x: point.x < containerSize.width / 2 ? leftX : rightX,
-            y: point.y
-        )
+        return CGPoint(x: point.x < containerSize.width / 2 ? leftX : rightX, y: clamped(point).y)
     }
 
     private func openMenuPosition(from point: CGPoint) -> CGPoint {
-        // 工具面板展开时不要吸边，否则按钮会顶到屏幕边缘不好点。
-        let inset: CGFloat = 118
+        let inset: CGFloat = 136
         let x = point.x < containerSize.width / 2 ? inset : max(inset, containerSize.width - inset)
         return clamped(CGPoint(x: x, y: point.y))
     }
 
-    private func dockToolButton(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 17, weight: .black))
-                Text(title)
-                    .font(.system(size: 12, weight: .heavy))
-            }
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 58)
-            .background(
-                LinearGradient(
-                    colors: [.white.opacity(0.18), .white.opacity(0.07)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-            )
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(.white.opacity(0.16)))
-        }
-    }
-
-    private func dockButton(
-        _ icon: String,
-        disabled: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .bold))
-                .frame(width: 35, height: 35)
-        }
-        .foregroundStyle(disabled ? .white.opacity(0.28) : .white)
-        .disabled(disabled)
+    private func savePosition() {
+        UserDefaults.standard.set(position.x, forKey: "dockX")
+        UserDefaults.standard.set(position.y, forKey: "dockY")
     }
 }
 
@@ -445,6 +651,7 @@ private extension View {
     }
 }
 
+
 private struct FloatingSettingsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
@@ -452,56 +659,146 @@ private struct FloatingSettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("悬浮球透明度") {
-                    Slider(
-                        value: Binding(
-                            get: { appState.floatingOpacity },
-                            set: { appState.saveFloatingOpacity($0) }
-                        ),
-                        in: 0.2...1
-                    )
-                    Text("当前：\(Int(appState.floatingOpacity * 100))%")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            ZStack {
+                LinearGradient(
+                    colors: [Color(red: 0.025, green: 0.055, blue: 0.10), Color(red: 0.06, green: 0.09, blue: 0.16)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
 
-                Section("画中画完成提示") {
-                    Toggle("画中画提示同步为系统横幅", isOn: $mirrorPiPAlertToBanner)
-                    Button("测试顶部横幅和震动") {
-                        ReplyNotificationService.shared.sendBannerTest()
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 14) {
+                        settingsCard("原生输入栏", systemImage: "keyboard") {
+                            Toggle("启用底部原生输入栏", isOn: Binding(
+                                get: { appState.nativeInputEnabled },
+                                set: { appState.saveNativeInputEnabled($0) }
+                            ))
+                            .tint(Color(red: 0.45, green: 0.78, blue: 1.0))
+                            Text("开启后可以直接用 App 底部输入框发送消息，不再依赖网页右下角按钮。")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.62))
+                        }
+
+                        settingsCard("后台保活", systemImage: "bolt.heart.fill") {
+                            Toggle("增强后台保活", isOn: Binding(
+                                get: { appState.enhancedKeepAlive },
+                                set: { appState.saveEnhancedKeepAlive($0) }
+                            ))
+                            .tint(Color(red: 0.45, green: 0.78, blue: 1.0))
+                            Text("会维持静音音频心跳和短时后台任务。iOS 仍可能限制长时间后台，但比普通 WebView 更稳。")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.62))
+                        }
+
+                        settingsCard("页面舒适度", systemImage: "iphone.gen3") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("页面比例")
+                                    Spacer()
+                                    Text("\(Int(appState.pageZoom * 100))%")
+                                        .foregroundStyle(.white.opacity(0.64))
+                                }
+                                Slider(
+                                    value: Binding(get: { appState.pageZoom }, set: { appState.savePageZoom($0) }),
+                                    in: 0.88...1.0
+                                )
+                                HStack {
+                                    Text("底部安全距离")
+                                    Spacer()
+                                    Text("\(Int(appState.bottomSafePadding)) px")
+                                        .foregroundStyle(.white.opacity(0.64))
+                                }
+                                Slider(
+                                    value: Binding(get: { appState.bottomSafePadding }, set: { appState.saveBottomSafePadding($0) }),
+                                    in: 10...52
+                                )
+                            }
+                            .tint(Color(red: 0.50, green: 0.82, blue: 1.0))
+                        }
+
+                        settingsCard("悬浮球", systemImage: "drop.fill") {
+                            HStack {
+                                Text("透明度")
+                                Spacer()
+                                Text("\(Int(appState.floatingOpacity * 100))%")
+                                    .foregroundStyle(.white.opacity(0.64))
+                            }
+                            Slider(
+                                value: Binding(get: { appState.floatingOpacity }, set: { appState.saveFloatingOpacity($0) }),
+                                in: 0.2...1
+                            )
+                            .tint(Color(red: 0.50, green: 0.82, blue: 1.0))
+                        }
+
+                        settingsCard("画中画完成提示", systemImage: "pip.fill") {
+                            Toggle("画中画提示同步为系统横幅", isOn: $mirrorPiPAlertToBanner)
+                                .tint(Color(red: 0.45, green: 0.78, blue: 1.0))
+                            Button {
+                                ReplyNotificationService.shared.sendBannerTest()
+                            } label: {
+                                Label("测试顶部横幅和震动", systemImage: "bell.badge.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Text("系统横幅只由画中画完成状态条映射一次，避免三路检测重复弹。")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.62))
+                        }
+
+                        settingsCard("手势", systemImage: "hand.tap.fill") {
+                            Label("拖动：移动悬浮球", systemImage: "hand.draw")
+                            Label("轻点：展开液态工具面板", systemImage: "hand.tap")
+                            Label("长按：启动系统画中画", systemImage: "pip")
+                        }
                     }
-                    Label("只有画中画状态条出现时才会映射一次横幅", systemImage: "pip.fill")
-                    Label("横幅会跟随系统通知设置触发一次默认提示音 / 震动", systemImage: "iphone.radiowaves.left.and.right")
-                    Text("这个模式不会再让酒馆原生事件、服务端桥接和后台轮询各弹一次。顶部横幅和震动仍受 iPhone 设置 → 通知 → 云洞酒馆 的声音、横幅、静音模式影响。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("已关闭的不稳定工具") {
-                    Label("已移除划词翻译、生成卡片和红色报错自动翻译，避免点了没反应或遮挡原生菜单", systemImage: "trash")
-                    Text("目前保留稳定功能：画中画、完成状态条、横幅映射、选区长截图和悬浮球工具。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("操作说明") {
-                    Label("拖动：移动悬浮球", systemImage: "hand.draw")
-                    Label("轻点：展开或收起工具", systemImage: "hand.tap")
-                    Label("长按：启动系统画中画小窗", systemImage: "pip")
-                    Text("启动后滑回桌面或切换到其他 App，小窗会继续悬浮。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 30)
                 }
             }
-            .navigationTitle("悬浮球设置")
+            .navigationTitle("液态设置")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
+                        .fontWeight(.bold)
                 }
             }
         }
+        .preferredColorScheme(.dark)
+    }
+
+    private func settingsCard<Content: View>(
+        _ title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 9) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 14, weight: .black))
+                    .frame(width: 28, height: 28)
+                    .background(.white.opacity(0.12), in: Circle())
+                Text(title)
+                    .font(.system(size: 17, weight: .heavy, design: .rounded))
+                Spacer()
+            }
+            content()
+                .font(.system(size: 15, weight: .semibold))
+        }
+        .foregroundStyle(.white)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(
+                    LinearGradient(colors: [.white.opacity(0.38), .white.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: 1
+                )
+        )
+        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
     }
 }
 
@@ -514,16 +811,72 @@ final class BrowserModel: ObservableObject {
     @Published var isGenerating = false
     @Published var isCapturing = false
     var currentGenerationId: String?
+    var serverGenerationId: String?
     var generationStartedAt: Date?
+    var lastReplyText = ""
+    var generationHadVisibleText = false
     let pictureInPicture = WebPictureInPictureController()
     let liveBridge = LiveReplyBridge()
     weak var webView: WKWebView?
+
+    func sendNativeMessage(_ text: String, completion: @escaping (Bool, String?) -> Void) {
+        guard let webView else {
+            completion(false, "网页还没加载完成")
+            return
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: text, options: [.fragmentsAllowed]),
+              let json = String(data: data, encoding: .utf8) else {
+            completion(false, "文本编码失败")
+            return
+        }
+
+        let script = """
+        (async () => {
+          const text = \(json);
+          const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+          const textarea = document.querySelector('#send_textarea, textarea[name="text"], textarea');
+          if (!textarea) return { ok: false, error: '未找到酒馆输入框' };
+          textarea.focus();
+          const proto = window.HTMLTextAreaElement && Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+          if (proto && proto.set) proto.set.call(textarea, text); else textarea.value = text;
+          try {
+            textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+          } catch (_) {
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          textarea.dispatchEvent(new Event('change', { bubbles: true }));
+          await sleep(90);
+          const send = document.querySelector('#send_but, button[title*="发送"], button[aria-label*="发送"], button[title*="Send"], button[aria-label*="Send"]');
+          if (!send) return { ok: false, error: '未找到发送按钮' };
+          if (send.disabled) return { ok: false, error: '发送按钮暂不可用' };
+          send.click();
+          return { ok: true };
+        })();
+        """
+
+        webView.evaluateJavaScript(script) { result, error in
+            Task { @MainActor in
+                if let error {
+                    completion(false, error.localizedDescription)
+                    return
+                }
+                if let dict = result as? [String: Any] {
+                    let ok = dict["ok"] as? Bool ?? false
+                    completion(ok, dict["error"] as? String)
+                } else {
+                    completion(false, "发送脚本没有返回结果")
+                }
+            }
+        }
+    }
 }
 
 struct WebView: UIViewRepresentable {
     let url: URL
     @ObservedObject var browser: BrowserModel
     let reloadToken: UUID
+    let pageZoom: Double
+    let bottomSafePadding: Double
 
     func makeCoordinator() -> Coordinator {
         Coordinator(browser: browser)
@@ -548,6 +901,13 @@ struct WebView: UIViewRepresentable {
         )
         configuration.userContentController.addUserScript(
             WKUserScript(
+                source: Self.comfortScript(pageZoom: pageZoom, bottomSafePadding: bottomSafePadding),
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true
+            )
+        )
+        configuration.userContentController.addUserScript(
+            WKUserScript(
                 source: Self.replyObserverScript,
                 injectionTime: .atDocumentEnd,
                 forMainFrameOnly: true
@@ -555,6 +915,7 @@ struct WebView: UIViewRepresentable {
         )
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        applyComfort(to: webView)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
@@ -572,11 +933,74 @@ struct WebView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
+        applyComfort(to: webView)
         if context.coordinator.lastReloadToken != reloadToken {
             context.coordinator.lastReloadToken = reloadToken
             webView.reload()
         }
     }
+
+    private func applyComfort(to webView: WKWebView) {
+        webView.pageZoom = CGFloat(pageZoom)
+        let bottom = CGFloat(bottomSafePadding)
+        var inset = webView.scrollView.contentInset
+        inset.bottom = bottom
+        webView.scrollView.contentInset = inset
+        var indicatorInset = webView.scrollView.verticalScrollIndicatorInsets
+        indicatorInset.bottom = bottom
+        webView.scrollView.verticalScrollIndicatorInsets = indicatorInset
+        let script = Self.comfortScript(pageZoom: pageZoom, bottomSafePadding: bottomSafePadding)
+        webView.evaluateJavaScript(script)
+    }
+
+    private static func comfortScript(pageZoom: Double, bottomSafePadding: Double) -> String {
+        let bottom = max(0, min(80, bottomSafePadding))
+        return """
+        (() => {
+          const bottom = '\(Int(bottom))px';
+          let style = document.getElementById('tavern-ios-comfort-style');
+          if (!style) {
+            style = document.createElement('style');
+            style.id = 'tavern-ios-comfort-style';
+            document.head.appendChild(style);
+          }
+          const nativeInput = \(bottom > 80 ? "true" : "false");
+          document.body.classList.toggle('tavern-ios-native-input', nativeInput);
+          style.textContent = `
+            :root { --tavern-ios-bottom: ${bottom}; }
+            body { padding-bottom: max(10px, var(--tavern-ios-bottom)) !important; }
+            #send_form, #form_sheld, .send_form, form:has(#send_textarea) {
+              bottom: max(10px, env(safe-area-inset-bottom)) !important;
+              margin-bottom: max(var(--tavern-ios-bottom), env(safe-area-inset-bottom)) !important;
+              padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+            }
+            body.tavern-ios-native-input #send_form,
+            body.tavern-ios-native-input #form_sheld,
+            body.tavern-ios-native-input .send_form,
+            body.tavern-ios-native-input form:has(#send_textarea) {
+              opacity: 0.02 !important;
+              pointer-events: none !important;
+              transform: translateY(88px) !important;
+            }
+            #send_but, #mes_stop, button[title*="发送"], button[aria-label*="发送"], button[title*="Send"], button[aria-label*="Send"] {
+              min-width: 46px !important;
+              min-height: 46px !important;
+            }
+            #send_textarea, textarea {
+              min-height: 44px !important;
+            }
+          `;
+        })();
+        """
+    }
+
+    static let currentReplyTextScript = """
+    (() => {
+      const messages = document.querySelectorAll('#chat .mes, .chat .mes');
+      const last = messages[messages.length - 1];
+      return last ? (last.innerText || last.textContent || '') : '';
+    })();
+    """
 
     static let replyObserverScript = """
     (() => {
@@ -661,7 +1085,7 @@ struct WebView: UIViewRepresentable {
                 reason: value.trim() ? 'complete' : 'empty',
                 text: value
               });
-            }, 100));
+            }, 650));
           }
           eventWired = Boolean(types.GENERATION_STARTED && types.GENERATION_ENDED);
           return eventWired;
@@ -723,48 +1147,27 @@ struct WebView: UIViewRepresentable {
 
         init(browser: BrowserModel) {
             self.browser = browser
+            super.init()
             browser.liveBridge.onConnectionChange = { [weak browser] connected, text in
                 guard let browser else { return }
                 browser.pictureInPicture.updateBridgeStatus(text, connected: connected)
             }
-            browser.liveBridge.onEvent = { [weak browser] event in
-                guard let browser else { return }
-                let id = event.generationId ?? "live-\(UUID().uuidString)"
+            browser.liveBridge.onEvent = { [weak self] event in
+                guard let self else { return }
                 switch event.type {
                 case "start":
-                    let cycleId = browser.currentGenerationId ?? "cycle-\(UUID().uuidString)"
-                    browser.currentGenerationId = cycleId
-                    browser.generationStartedAt = browser.generationStartedAt ?? Date()
-                    browser.isGenerating = true
-                    browser.pictureInPicture.generationStarted(character: event.character)
-                    ReplyNotificationService.shared.generationStarted(id: cycleId)
+                    self.beginGeneration(serverGenerationId: event.generationId, character: event.character)
                 case "snapshot":
-                    let cycleId = browser.currentGenerationId ?? "cycle-\(UUID().uuidString)"
-                    browser.currentGenerationId = cycleId
-                    browser.generationStartedAt = browser.generationStartedAt ?? Date()
-                    browser.isGenerating = true
-                    browser.pictureInPicture.generationStarted(character: event.character)
-                    ReplyNotificationService.shared.generationStarted(id: cycleId)
-                    browser.pictureInPicture.updateReply(
-                        text: event.text ?? "",
-                        character: event.character
-                    )
+                    self.beginGeneration(serverGenerationId: event.generationId, character: event.character)
+                    self.updateGenerationText(event.text ?? "", character: event.character)
                 case "token":
-                    browser.isGenerating = true
-                    browser.pictureInPicture.updateReply(
-                        text: event.text ?? "",
-                        character: event.character
-                    )
+                    self.updateGenerationText(event.text ?? "", character: event.character)
                 case "end":
-                    // 页面启动时偶尔会冒出一个无对应 start 的 end，不能把它当空回。
-                    guard let resolvedId = browser.currentGenerationId,
-                          browser.generationStartedAt != nil else { return }
-                    let outcome = ReplyOutcome(rawValue: event.reason ?? "") ?? ((event.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .complete)
-                    browser.isGenerating = false
-                    browser.pictureInPicture.generationFinished(text: event.text ?? "", outcome: outcome, generationId: resolvedId)
-                    ReplyNotificationService.shared.generationFinished(id: resolvedId, outcome: outcome)
-                    browser.currentGenerationId = nil
-                    browser.generationStartedAt = nil
+                    self.finishGenerationSafely(
+                        text: event.text ?? "",
+                        reason: event.reason,
+                        serverGenerationId: event.generationId
+                    )
                 default:
                     break
                 }
@@ -822,31 +1225,106 @@ struct WebView: UIViewRepresentable {
                   let payload = message.body as? [String: Any],
                   let type = payload["type"] as? String else { return }
             Task { @MainActor in
-                let id = payload["id"] as? String ?? "fallback-\(UUID().uuidString)"
                 if type == "started" {
-                    let resolvedId = browser.currentGenerationId ?? "cycle-\(UUID().uuidString)"
-                    browser.currentGenerationId = resolvedId
-                    browser.generationStartedAt = browser.generationStartedAt ?? Date()
+                    let resolvedId = beginGeneration(serverGenerationId: nil, character: nil)
                     fallbackGenerationId = resolvedId
-                    browser.isGenerating = true
-                    browser.pictureInPicture.generationStarted(character: nil)
-                    ReplyNotificationService.shared.generationStarted(id: resolvedId)
                     if let webView = browser.webView { startCompletionPolling(webView) }
                 } else if type == "finished" {
-                    guard let resolvedId = browser.currentGenerationId,
-                          browser.generationStartedAt != nil else { return }
-                    let text = payload["text"] as? String ?? ""
-                    let outcome = ReplyOutcome(rawValue: payload["reason"] as? String ?? "")
-                        ?? (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .complete)
-                    browser.isGenerating = false
-                    stopCompletionPolling()
-                    browser.pictureInPicture.generationFinished(text: text, outcome: outcome, generationId: resolvedId)
-                    ReplyNotificationService.shared.generationFinished(id: resolvedId, outcome: outcome)
-                    browser.currentGenerationId = nil
-                    browser.generationStartedAt = nil
-                    fallbackGenerationId = nil
+                    finishGenerationSafely(
+                        text: payload["text"] as? String ?? "",
+                        reason: payload["reason"] as? String,
+                        serverGenerationId: nil
+                    )
                 }
             }
+        }
+
+
+        @discardableResult
+        private func beginGeneration(serverGenerationId: String?, character: String?) -> String {
+            let isNewCycle = browser.currentGenerationId == nil
+            let resolvedId = browser.currentGenerationId ?? "cycle-\(UUID().uuidString)"
+            browser.currentGenerationId = resolvedId
+            if let serverGenerationId {
+                // 服务端桥接的 start/snapshot/end 必须属于同一个 generationId，避免旧历史 end 被当作新一轮空回。
+                browser.serverGenerationId = serverGenerationId
+            }
+            browser.generationStartedAt = browser.generationStartedAt ?? Date()
+            browser.isGenerating = true
+            if isNewCycle {
+                browser.lastReplyText = ""
+                browser.generationHadVisibleText = false
+                browser.pictureInPicture.generationStarted(character: character)
+                ReplyNotificationService.shared.generationStarted(id: resolvedId)
+            }
+            return resolvedId
+        }
+
+        private func updateGenerationText(_ text: String, character: String?) {
+            let resolvedId = beginGeneration(serverGenerationId: nil, character: character)
+            _ = resolvedId
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                browser.lastReplyText = text
+                browser.generationHadVisibleText = true
+            }
+            browser.pictureInPicture.updateReply(text: text.isEmpty ? browser.lastReplyText : text, character: character)
+        }
+
+        private func finishGenerationSafely(text: String, reason: String?, serverGenerationId: String?) {
+            if let serverGenerationId {
+                // 只接受本轮服务端 start/snapshot 对应的 end。这样可以过滤 App 重连时服务端 replay 的旧空回。
+                guard browser.serverGenerationId == serverGenerationId else { return }
+            }
+            guard let resolvedId = browser.currentGenerationId,
+                  let startedAt = browser.generationStartedAt else { return }
+
+            let rawText = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? browser.lastReplyText : text
+            let rawOutcome = ReplyOutcome(rawValue: reason ?? "")
+                ?? (rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .complete)
+
+            if rawOutcome == .empty && rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // 空回最容易误判：先再读一次 DOM。只有本轮足够久且确实没有文字，才允许提示空回。
+                guard Date().timeIntervalSince(startedAt) >= 3.0 else { return }
+                if let webView = browser.webView {
+                    webView.evaluateJavaScript(WebView.currentReplyTextScript) { [weak self] result, _ in
+                        Task { @MainActor in
+                            guard let self else { return }
+                            let domText = result as? String ?? ""
+                            self.completeFinish(
+                                id: resolvedId,
+                                text: domText,
+                                requestedOutcome: domText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .complete
+                            )
+                        }
+                    }
+                } else {
+                    completeFinish(id: resolvedId, text: rawText, requestedOutcome: .empty)
+                }
+                return
+            }
+
+            completeFinish(id: resolvedId, text: rawText, requestedOutcome: rawOutcome)
+        }
+
+        private func completeFinish(id: String, text: String, requestedOutcome: ReplyOutcome) {
+            let visibleText = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? browser.lastReplyText : text
+            var outcome = requestedOutcome
+            if outcome == .empty,
+               browser.generationHadVisibleText || !visibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                outcome = .complete
+            }
+
+            browser.isGenerating = false
+            stopCompletionPolling()
+            browser.pictureInPicture.generationFinished(text: visibleText, outcome: outcome, generationId: id)
+            ReplyNotificationService.shared.generationFinished(id: id, outcome: outcome)
+            browser.currentGenerationId = nil
+            browser.serverGenerationId = nil
+            browser.generationStartedAt = nil
+            browser.lastReplyText = ""
+            browser.generationHadVisibleText = false
+            fallbackGenerationId = nil
         }
 
 
@@ -951,12 +1429,11 @@ struct WebView: UIViewRepresentable {
                                     self.stopCompletionPolling()
                                     return
                                 }
-                                self.browser.isGenerating = false
-                                self.stopCompletionPolling()
-                                self.browser.currentGenerationId = nil
-                                self.browser.generationStartedAt = nil
-                                self.fallbackGenerationId = nil
-                                ReplyNotificationService.shared.generationFinished(id: id, outcome: .complete)
+                                self.completeFinish(
+                                    id: id,
+                                    text: self.browser.lastReplyText,
+                                    requestedOutcome: .complete
+                                )
                             }
                         }
                     }

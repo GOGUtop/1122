@@ -7,24 +7,51 @@ final class BackgroundKeepAliveService {
 
     private var player: AVAudioPlayer?
     private var reasons = Set<String>()
+    private var heartbeatTimer: Timer?
 
     func start(reason: String) {
         reasons.insert(reason)
         configureSession()
         ensurePlayer()
         player?.play()
+        startHeartbeatIfNeeded()
+        UIApplication.shared.isIdleTimerDisabled = true
     }
 
     func stop(reason: String) {
         reasons.remove(reason)
         guard reasons.isEmpty else { return }
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
         player?.stop()
+        UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    func refresh() {
+        guard !reasons.isEmpty else { return }
+        configureSession()
+        ensurePlayer()
+        if player?.isPlaying != true {
+            player?.play()
+        }
+        UIApplication.shared.isIdleTimerDisabled = true
     }
 
     private func configureSession() {
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers, .allowAirPlay])
         try? session.setActive(true)
+    }
+
+    private func startHeartbeatIfNeeded() {
+        guard heartbeatTimer == nil else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: 9, repeats: true) { _ in
+            Task { @MainActor in
+                BackgroundKeepAliveService.shared.refresh()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        heartbeatTimer = timer
     }
 
     private func ensurePlayer() {
@@ -35,7 +62,7 @@ final class BackgroundKeepAliveService {
         }
         guard let newPlayer = try? AVAudioPlayer(contentsOf: url) else { return }
         newPlayer.numberOfLoops = -1
-        newPlayer.volume = 0.01
+        newPlayer.volume = 0.012
         newPlayer.prepareToPlay()
         player = newPlayer
     }
