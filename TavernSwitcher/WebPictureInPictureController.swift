@@ -12,6 +12,8 @@ final class WebPictureInPictureController: NSObject {
     private var delegateBox: PiPControllerDelegate?
     private var lastFinishSignature = ""
     private var lastFinishAt: Date?
+    private var mirrorTimer: Timer?
+    private var isCapturingMirror = false
 
     func attach(to webView: WKWebView) {
         guard self.webView !== webView else { return }
@@ -27,13 +29,17 @@ final class WebPictureInPictureController: NSObject {
         previewController.showWaiting()
 
         let delegate = PiPControllerDelegate()
-        delegate.onStop = {
+        delegate.onStop = { [weak self] in
             Task { @MainActor in
+                self?.stopMirrorTimer()
+                self?.previewController.setMirrorMode(false)
                 BackgroundKeepAliveService.shared.stop(reason: "pip")
             }
         }
-        delegate.onFailed = { _ in
+        delegate.onFailed = { [weak self] _ in
             Task { @MainActor in
+                self?.stopMirrorTimer()
+                self?.previewController.setMirrorMode(false)
                 BackgroundKeepAliveService.shared.stop(reason: "pip")
             }
         }
@@ -99,6 +105,8 @@ final class WebPictureInPictureController: NSObject {
 
         configureAudioSession()
         BackgroundKeepAliveService.shared.start(reason: "pip")
+        previewController.setMirrorMode(true)
+        startMirrorTimer()
         startWhenReady(controller, retries: 30)
         return true
     }
@@ -108,6 +116,8 @@ final class WebPictureInPictureController: NSObject {
         guard let controller else { return false }
         if controller.isPictureInPictureActive {
             controller.stopPictureInPicture()
+            stopMirrorTimer()
+            previewController.setMirrorMode(false)
             BackgroundKeepAliveService.shared.stop(reason: "pip")
             return true
         }
@@ -125,6 +135,45 @@ final class WebPictureInPictureController: NSObject {
         }
     }
 
+    private func startMirrorTimer() {
+        stopMirrorTimer()
+        captureMirrorFrame()
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.captureMirrorFrame()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        mirrorTimer = timer
+    }
+
+    private func stopMirrorTimer() {
+        mirrorTimer?.invalidate()
+        mirrorTimer = nil
+        isCapturingMirror = false
+    }
+
+    private func captureMirrorFrame() {
+        guard let webView, !isCapturingMirror else { return }
+        guard webView.window != nil else { return }
+        let bounds = webView.bounds
+        guard bounds.width > 10, bounds.height > 10 else { return }
+        isCapturingMirror = true
+        let config = WKSnapshotConfiguration()
+        config.rect = bounds
+        config.afterScreenUpdates = false
+        config.snapshotWidth = NSNumber(value: Double(min(420, bounds.width)))
+        webView.takeSnapshot(with: config) { [weak self] image, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isCapturingMirror = false
+                if let image {
+                    self.previewController.updateMirrorImage(image)
+                }
+            }
+        }
+    }
+
     private func configureAudioSession() {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
@@ -133,6 +182,9 @@ final class WebPictureInPictureController: NSObject {
 }
 
 private final class LiveReplyPiPViewController: AVPictureInPictureVideoCallViewController {
+    private let mirrorImageView = UIImageView()
+    private let mirrorShadeView = UIView()
+    private var mirrorModeEnabled = false
     private let headerBar = UIView()
     private let characterLabel = UILabel()
     private let statusPill = UILabel()
@@ -154,6 +206,14 @@ private final class LiveReplyPiPViewController: AVPictureInPictureVideoCallViewC
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 0.018, green: 0.026, blue: 0.045, alpha: 1)
         view.layer.cornerCurve = .continuous
+
+        mirrorImageView.backgroundColor = .black
+        mirrorImageView.contentMode = .scaleAspectFit
+        mirrorImageView.clipsToBounds = true
+        mirrorImageView.alpha = 0
+
+        mirrorShadeView.backgroundColor = UIColor.black.withAlphaComponent(0.20)
+        mirrorShadeView.alpha = 0
 
         headerBar.backgroundColor = UIColor.white.withAlphaComponent(0.075)
         headerBar.layer.cornerRadius = 19
@@ -237,6 +297,10 @@ private final class LiveReplyPiPViewController: AVPictureInPictureVideoCallViewC
         finishBodyLabel.textAlignment = .center
         finishBodyLabel.numberOfLines = 2
 
+        [mirrorImageView, mirrorShadeView].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview($0)
+        }
         [headerBar, chatSurface, inputBar, finishBanner].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
@@ -259,6 +323,15 @@ private final class LiveReplyPiPViewController: AVPictureInPictureVideoCallViewC
         }
 
         NSLayoutConstraint.activate([
+            mirrorImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            mirrorImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            mirrorImageView.topAnchor.constraint(equalTo: view.topAnchor),
+            mirrorImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            mirrorShadeView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            mirrorShadeView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            mirrorShadeView.topAnchor.constraint(equalTo: view.topAnchor),
+            mirrorShadeView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
             headerBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
             headerBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
             headerBar.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
@@ -323,13 +396,38 @@ private final class LiveReplyPiPViewController: AVPictureInPictureVideoCallViewC
         ])
     }
 
+    func setMirrorMode(_ enabled: Bool) {
+        loadViewIfNeeded()
+        mirrorModeEnabled = enabled
+        let hasMirror = mirrorImageView.image != nil
+        UIView.animate(withDuration: 0.22) {
+            self.mirrorImageView.alpha = enabled && hasMirror ? 1 : 0
+            self.mirrorShadeView.alpha = enabled && hasMirror ? 1 : 0
+            self.chatSurface.alpha = enabled && hasMirror ? 0.34 : 1
+            self.inputBar.alpha = enabled ? 0.94 : 1
+        }
+    }
+
+    func updateMirrorImage(_ image: UIImage) {
+        loadViewIfNeeded()
+        mirrorImageView.image = image
+        guard mirrorModeEnabled else { return }
+        if mirrorImageView.alpha < 0.9 {
+            UIView.animate(withDuration: 0.20) {
+                self.mirrorImageView.alpha = 1
+                self.mirrorShadeView.alpha = 1
+                self.chatSurface.alpha = 0.34
+            }
+        }
+    }
+
     func showWaiting() {
         loadViewIfNeeded()
         hideFinishBanner(animated: false)
         statusPill.text = "待机"
         roleLabel.text = "正在等待回复"
-        inputLabel.text = "缩小版酒馆镜像 · 等待生成"
-        textView.text = "开始生成后，这里会以缩小版酒馆样式实时显示 AI 正在输出的内容。"
+        inputLabel.text = "网页镜像 · 等待生成"
+        textView.text = "画中画会优先显示酒馆网页镜像；后台网页冻结时，用实时桥接文字兜底。"
     }
 
     func start(character: String?) {
@@ -381,7 +479,7 @@ private final class LiveReplyPiPViewController: AVPictureInPictureVideoCallViewC
             }
         } else if fullText.isEmpty && !activity.isAnimating {
             statusPill.text = "已连接"
-            inputLabel.text = "缩小版酒馆镜像 · 等待生成"
+            inputLabel.text = "网页镜像 · 等待生成"
         }
     }
 
@@ -444,7 +542,7 @@ private extension ReplyOutcome {
 
     var pipBody: String {
         switch self {
-        case .complete: return "回到 App 可点：快速重Roll / 新建记录"
+        case .complete: return "回到 App 可点：快速重Roll"
         case .truncated: return "建议回到 App 点：快速重Roll"
         case .empty: return "建议回到 App 点：快速重Roll"
         }

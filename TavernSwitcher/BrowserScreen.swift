@@ -85,8 +85,6 @@ struct BrowserScreen: View {
                     onSwitch: { appState.showSwitcher = true },
                     onScreenshot: beginRangeCapture,
                     onQuickReroll: { runTavernQuickAction(.reroll) },
-                    onCloseChat: { runTavernQuickAction(.closeChat) },
-                    onNewChat: { runTavernQuickAction(.newChat) },
                     onSettings: { showSettings = true },
                     onPictureInPicture: {
                         if browser.pictureInPicture.toggle() {
@@ -163,14 +161,10 @@ struct BrowserScreen: View {
 
     private enum TavernQuickAction: String {
         case reroll
-        case closeChat
-        case newChat
 
         var displayName: String {
             switch self {
             case .reroll: return "快速重Roll"
-            case .closeChat: return "关闭聊天记录"
-            case .newChat: return "新建聊天记录"
             }
         }
     }
@@ -205,96 +199,109 @@ struct BrowserScreen: View {
         return """
         (() => {
           const action = '\(raw)';
-          const visible = el => {
+          const visibleEnough = el => {
             if (!el) return false;
-            const style = getComputedStyle(el);
             const rect = el.getBoundingClientRect();
-            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0 && !el.disabled;
+            const style = getComputedStyle(el);
+            return rect.width >= 1 && rect.height >= 1 && style.display !== 'none' && style.visibility !== 'hidden' && !el.disabled;
           };
-          const click = el => {
-            if (!visible(el)) return false;
+          const forceClick = el => {
+            if (!el) return false;
             try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
+            try { el.style.pointerEvents = 'auto'; } catch (_) {}
             try { el.focus?.(); } catch (_) {}
-            ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(type => {
-              try { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window })); } catch (_) {}
+            const opts = { bubbles: true, cancelable: true, view: window };
+            ['pointerdown','mousedown','touchstart','pointerup','mouseup','touchend','click'].forEach(type => {
+              try {
+                if (type.startsWith('touch')) el.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
+                else el.dispatchEvent(new MouseEvent(type, opts));
+              } catch (_) {}
             });
+            try { el.click?.(); } catch (_) {}
             return true;
           };
-          const candidates = (selectors) => {
-            const result = [];
-            for (const selector of selectors) {
-              try { document.querySelectorAll(selector).forEach(el => result.push(el)); } catch (_) {}
-            }
-            return result;
+          const queryAll = selectors => {
+            const out = [];
+            selectors.forEach(selector => {
+              try { document.querySelectorAll(selector).forEach(el => out.push(el)); } catch (_) {}
+            });
+            return [...new Set(out)];
           };
-          const byText = terms => {
-            const nodes = Array.from(document.querySelectorAll('button, .menu_button, .list-group-item, [role="button"], a, div, span'))
-              .filter(visible);
+          const textMatches = (terms, root = document) => {
+            const nodes = Array.from(root.querySelectorAll?.('button, a, div, span, i, svg, [role="button"], .menu_button, .list-group-item') || []);
             return nodes.filter(el => {
-              const hay = `${el.innerText || ''} ${el.textContent || ''} ${el.title || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase();
+              const hay = `${el.innerText || ''} ${el.textContent || ''} ${el.title || ''} ${el.getAttribute('aria-label') || ''} ${el.dataset?.i18n || ''}`.toLowerCase();
               return terms.some(term => hay.includes(term.toLowerCase()));
             });
           };
-          const clickAny = (selectors, terms) => {
-            const all = [...candidates(selectors), ...byText(terms)];
-            const unique = all.filter((el, index) => all.indexOf(el) === index);
-            for (const el of unique) {
-              if (click(el)) return true;
+          const clickAny = (selectors, terms = [], root = document, requireVisible = false) => {
+            const all = [...queryAll(selectors), ...textMatches(terms, root)];
+            for (const el of [...new Set(all)]) {
+              if (!requireVisible || visibleEnough(el)) {
+                if (forceClick(el)) return true;
+              }
             }
             return false;
           };
-          const tryContext = (names) => {
-            try {
-              const ctx = window.SillyTavern?.getContext?.();
-              for (const name of names) {
-                const fn = ctx?.[name] || window[name];
-                if (typeof fn === 'function') {
-                  try { fn.call(ctx); return true; } catch (_) {}
-                }
-              }
-            } catch (_) {}
+          const tryCalls = calls => {
+            for (const fn of calls) {
+              try {
+                const value = fn();
+                if (value !== false) return true;
+              } catch (_) {}
+            }
             return false;
           };
-
+          const context = (() => { try { return window.SillyTavern?.getContext?.(); } catch (_) { return null; } })();
           if (action === 'reroll') {
-            if (tryContext(['regenerate', 'reroll', 'doRegenerate'])) return { ok: true, message: '已触发快速重Roll' };
-            const ok = clickAny([
-              '#option_regenerate', '#option_regenerate_button', '#regenerate_button', '#mes_regenerate',
-              '.mes_regenerate', '.swipe_right', '.fa-rotate-right', '.fa-repeat',
-              '[title*="Regenerate" i]', '[aria-label*="Regenerate" i]', '[title*="Reroll" i]', '[aria-label*="Reroll" i]',
-              '[title*="重新生成" i]', '[aria-label*="重新生成" i]', '[title*="重Roll" i]', '[aria-label*="重Roll" i]'
-            ], ['Regenerate', 'Reroll', '重新生成', '重生成', '重 Roll', '重Roll']);
-            return ok ? { ok: true, message: '已触发快速重Roll' } : { ok: false, message: '没有找到快速重Roll按钮。' };
-          }
+            if (tryCalls([
+              () => { if (typeof context?.regenerate === 'function') { context.regenerate(); return true; } return false; },
+              () => { if (typeof context?.reroll === 'function') { context.reroll(); return true; } return false; },
+              () => { if (typeof context?.doRegenerate === 'function') { context.doRegenerate(); return true; } return false; },
+              () => { if (typeof window.regenerate === 'function') { window.regenerate(); return true; } return false; },
+              () => { if (typeof window.reroll === 'function') { window.reroll(); return true; } return false; },
+              () => { if (typeof window.doRegenerate === 'function') { window.doRegenerate(); return true; } return false; },
+              () => { if (typeof window.doSwipe === 'function') { window.doSwipe(1); return true; } return false; },
+              () => { if (typeof window.doSwipe === 'function') { window.doSwipe('right'); return true; } return false; }
+            ])) return { ok: true, message: '已触发快速重Roll' };
 
-          if (action === 'newChat') {
-            if (tryContext(['createNewChat', 'newChat', 'doNewChat'])) return { ok: true, message: '已触发新建聊天记录' };
-            const ok = clickAny([
-              '#option_new_chat', '#new_chat', '#new_chat_button', '#create_new_chat', '#newChat',
-              '[title*="New Chat" i]', '[aria-label*="New Chat" i]',
-              '[title*="新聊天" i]', '[aria-label*="新聊天" i]', '[title*="新建聊天" i]', '[aria-label*="新建聊天" i]',
-              '[title*="新建记录" i]', '[aria-label*="新建记录" i]'
-            ], ['New Chat', '新聊天', '新建聊天', '新建记录']);
-            return ok ? { ok: true, message: '已触发新建聊天记录' } : { ok: false, message: '没有找到新建聊天记录按钮。' };
-          }
+            const messages = Array.from(document.querySelectorAll('#chat .mes, .chat .mes, .mes'));
+            const lastAssistant = [...messages].reverse().find(el => {
+              const raw = `${el.getAttribute('is_user') || ''} ${el.dataset?.isUser || ''} ${el.className || ''}`.toLowerCase();
+              return !raw.includes('true') && !raw.includes('user_mes') && !raw.includes('user');
+            }) || messages[messages.length - 1] || document;
 
-          if (action === 'closeChat') {
-            const closeTerms = ['关闭聊天记录', '关闭聊天', '关闭记录', 'Close Chat', 'Close chat history', 'Close'];
-            const closeSelectors = [
-              '#chat_history_close', '#close_chat', '#closeChat', '#chat_panel_close', '#rm_button_close_chats',
-              '.drawer-close', '.popup-close', '.drawer .close', '.popup .close',
-              '[title*="Close Chat" i]', '[aria-label*="Close Chat" i]',
-              '[title*="关闭聊天" i]', '[aria-label*="关闭聊天" i]', '[title*="关闭记录" i]', '[aria-label*="关闭记录" i]'
+            const directSelectors = [
+              '.swipe_right', '.swipe_right_button', '.mes_regenerate', '.regenerate', '.reroll',
+              '.fa-rotate-right', '.fa-repeat', '.fa-redo', '.fa-sync', '.fa-arrows-rotate',
+              '[data-i18n*="regenerate" i]', '[data-i18n*="reroll" i]',
+              '[title*="Regenerate" i]', '[aria-label*="Regenerate" i]',
+              '[title*="Reroll" i]', '[aria-label*="Reroll" i]',
+              '[title*="Swipe" i]', '[aria-label*="Swipe" i]',
+              '[title*="重新生成" i]', '[aria-label*="重新生成" i]',
+              '[title*="重Roll" i]', '[aria-label*="重Roll" i]',
+              '#option_regenerate', '#option_regenerate_button', '#regenerate_button', '#mes_regenerate'
             ];
-            const ok = clickAny(closeSelectors, closeTerms);
-            return ok ? { ok: true, message: '已触发关闭聊天记录' } : { ok: false, message: '没有找到关闭聊天记录按钮。这个按钮不会执行删除操作。' };
-          }
+            const terms = ['Regenerate', 'Reroll', 'Swipe right', '重新生成', '重生成', '重 Roll', '重Roll'];
+            if (clickAny(directSelectors, terms, lastAssistant, false)) return { ok: true, message: '已触发快速重Roll' };
+            if (clickAny(directSelectors, terms, document, true)) return { ok: true, message: '已触发快速重Roll' };
 
+            const moreSelectors = [
+              '.extraMesButtonsHint', '.extra_mes_buttons', '.mes_actions', '.mes_buttons .fa-ellipsis',
+              '.mes_buttons .fa-ellipsis-h', '.mes_buttons .fa-ellipsis-vertical',
+              '[title*="More" i]', '[aria-label*="More" i]', '[title*="更多" i]', '[aria-label*="更多" i]'
+            ];
+            const more = queryAll(moreSelectors).reverse().find(el => lastAssistant.contains?.(el)) || queryAll(moreSelectors).reverse()[0];
+            if (more && forceClick(more)) {
+              setTimeout(() => clickAny(directSelectors, terms, document, false), 80);
+              return { ok: true, message: '已尝试打开消息菜单并触发重Roll' };
+            }
+            return { ok: false, message: '没有找到快速重Roll按钮。请先点开最后一条 AI 消息的更多菜单，或确认当前聊天已有 AI 回复。' };
+          }
           return { ok: false, message: '未知快捷操作。' };
         })();
         """
     }
-
     private func beginRangeCapture() {
         isSelectingRange = true
         rangeStart = nil
@@ -424,8 +431,6 @@ private struct FloatingDock: View {
     let onSwitch: () -> Void
     let onScreenshot: () -> Void
     let onQuickReroll: () -> Void
-    let onCloseChat: () -> Void
-    let onNewChat: () -> Void
     let onSettings: () -> Void
     let onPictureInPicture: () -> Void
 
@@ -507,10 +512,6 @@ private struct FloatingDock: View {
 
             VStack(spacing: 9) {
                 liquidWideTool("快速重Roll", "arrow.triangle.2.circlepath", action: onQuickReroll)
-                HStack(spacing: 9) {
-                    liquidTool("关闭记录", "xmark.message.fill", action: onCloseChat)
-                    liquidTool("新建记录", "plus.message.fill", action: onNewChat)
-                }
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 9) {
                     liquidTool("选区截图", "rectangle.and.text.magnifyingglass", action: onScreenshot)
                     liquidTool("画中画", "pip.fill", action: onPictureInPicture)
@@ -608,7 +609,7 @@ private struct FloatingDock: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.system(size: 14, weight: .heavy))
-                    Text("回复结束后可直接重新生成")
+                    Text("尝试触发最后一条 AI 回复重新生成")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.58))
                 }
