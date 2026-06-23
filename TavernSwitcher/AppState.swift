@@ -29,6 +29,8 @@ final class AppState: ObservableObject {
     @Published var bottomSafePadding = UserDefaults.standard.object(forKey: "bottomSafePadding") as? Double ?? 26
     @Published var enhancedKeepAlive = UserDefaults.standard.object(forKey: "enhancedKeepAlive") as? Bool ?? true
     @Published var autoPreventSleep = UserDefaults.standard.object(forKey: "autoPreventSleep") as? Bool ?? true
+    @Published var performanceMode = UserDefaults.standard.object(forKey: "performanceMode") as? Bool ?? true
+    @Published var downloadAutoShare = UserDefaults.standard.object(forKey: "downloadAutoShare") as? Bool ?? true
 
     private let lastPortKey = "lastEndpointPort"
 
@@ -80,6 +82,16 @@ final class AppState: ObservableObject {
     func saveAutoPreventSleep(_ value: Bool) {
         autoPreventSleep = value
         UserDefaults.standard.set(value, forKey: "autoPreventSleep")
+    }
+
+    func savePerformanceMode(_ value: Bool) {
+        performanceMode = value
+        UserDefaults.standard.set(value, forKey: "performanceMode")
+    }
+
+    func saveDownloadAutoShare(_ value: Bool) {
+        downloadAutoShare = value
+        UserDefaults.standard.set(value, forKey: "downloadAutoShare")
     }
 
     var webBottomPadding: Double {

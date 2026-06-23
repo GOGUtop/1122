@@ -11,6 +11,7 @@ struct BrowserScreen: View {
     @State private var showControls = false
     @State private var showSettings = false
     @State private var showShare = false
+    @State private var showDownloadCenter = false
     @State private var shareImage: UIImage?
     @State private var captureError: String?
     @State private var pipError: String?
@@ -31,7 +32,8 @@ struct BrowserScreen: View {
                     browser: browser,
                     reloadToken: appState.reloadToken,
                     pageZoom: appState.pageZoom,
-                    bottomSafePadding: appState.webBottomPadding
+                    bottomSafePadding: appState.webBottomPadding,
+                    performanceMode: appState.performanceMode
                 )
 
                 if browser.isLoading {
@@ -55,6 +57,14 @@ struct BrowserScreen: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
                     .shadow(radius: 12)
                     .zIndex(10)
+                }
+
+
+
+                if let notice = browser.downloadNotice {
+                    DownloadToast(message: notice)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(11)
                 }
 
                 if isSelectingRange {
@@ -84,6 +94,8 @@ struct BrowserScreen: View {
                     onPortal: { appState.activeEndpoint = nil },
                     onSwitch: { appState.showSwitcher = true },
                     onScreenshot: beginRangeCapture,
+                    onDownloads: { showDownloadCenter = true },
+                    downloadCount: browser.downloads.count,
                     onQuickReroll: { runTavernQuickAction(.reroll) },
                     onSettings: { showSettings = true },
                     onPictureInPicture: {
@@ -116,6 +128,9 @@ struct BrowserScreen: View {
             if let shareImage {
                 ActivitySheet(items: [shareImage])
             }
+        }
+        .sheet(isPresented: $showDownloadCenter) {
+            DownloadCenterView(items: browser.downloads, clear: browser.clearDownloads)
         }
         .alert("长截图失败", isPresented: Binding(
             get: { captureError != nil },
@@ -430,6 +445,8 @@ private struct FloatingDock: View {
     let onPortal: () -> Void
     let onSwitch: () -> Void
     let onScreenshot: () -> Void
+    let onDownloads: () -> Void
+    let downloadCount: Int
     let onQuickReroll: () -> Void
     let onSettings: () -> Void
     let onPictureInPicture: () -> Void
@@ -514,6 +531,7 @@ private struct FloatingDock: View {
                 liquidWideTool("快速重Roll", "arrow.triangle.2.circlepath", action: onQuickReroll)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 9) {
                     liquidTool("选区截图", "rectangle.and.text.magnifyingglass", action: onScreenshot)
+                    liquidTool(downloadCount > 0 ? "下载(\(downloadCount))" : "下载中心", "tray.and.arrow.down.fill", action: onDownloads)
                     liquidTool("画中画", "pip.fill", action: onPictureInPicture)
                     liquidTool("切换云洞", "arrow.triangle.2.circlepath", action: onSwitch)
                     liquidTool("设置", "slider.horizontal.3", action: onSettings)
@@ -739,6 +757,22 @@ private struct FloatingSettingsView: View {
                                 .foregroundStyle(.white.opacity(0.62))
                         }
 
+                        settingsCard("丝滑性能", systemImage: "speedometer") {
+                            Toggle("键盘/滚动时自动降负载", isOn: Binding(
+                                get: { appState.performanceMode },
+                                set: { appState.savePerformanceMode($0) }
+                            ))
+                            .tint(Color(red: 0.45, green: 0.78, blue: 1.0))
+                            Toggle("导出后自动弹保存", isOn: Binding(
+                                get: { appState.downloadAutoShare },
+                                set: { appState.saveDownloadAutoShare($0) }
+                            ))
+                            .tint(Color(red: 0.45, green: 0.78, blue: 1.0))
+                            Text("键盘动画、滚动和打字时会临时降低画中画镜像与液态模糊负载；导出角色卡/世界书/正则/预设时自动接管下载。")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.62))
+                        }
+
                         settingsCard("页面舒适度", systemImage: "iphone.gen3") {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack {
@@ -858,6 +892,9 @@ final class BrowserModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var isGenerating = false
     @Published var isCapturing = false
+    @Published var downloads: [TavernDownloadItem] = []
+    @Published var downloadNotice: String?
+    @Published var isKeyboardActive = false
     var currentGenerationId: String?
     var serverGenerationId: String?
     var generationStartedAt: Date?
@@ -867,8 +904,27 @@ final class BrowserModel: ObservableObject {
     let liveBridge = LiveReplyBridge()
     weak var webView: WKWebView?
 
+    func registerDownload(filename: String, fileURL: URL, mimeType: String, source: String, autoShare: Bool = true) {
+        let item = TavernDownloadItem(filename: filename, fileURL: fileURL, mimeType: mimeType, createdAt: Date(), source: source)
+        downloads.insert(item, at: 0)
+        if downloads.count > 50 { downloads.removeLast(downloads.count - 50) }
+        downloadNotice = "已捕获下载：\(filename)"
+        if autoShare {
+            _ = DownloadPresenter.present(items: [fileURL], from: webView)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak self] in
+            if self?.downloadNotice == "已捕获下载：\(filename)" {
+                self?.downloadNotice = nil
+            }
+        }
+    }
 
+    func clearDownloads() {
+        downloads.removeAll()
+        downloadNotice = nil
+    }
 }
+
 
 struct WebView: UIViewRepresentable {
     let url: URL
@@ -876,6 +932,7 @@ struct WebView: UIViewRepresentable {
     let reloadToken: UUID
     let pageZoom: Double
     let bottomSafePadding: Double
+    let performanceMode: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(browser: browser)
@@ -891,6 +948,14 @@ struct WebView: UIViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "tavernReply")
         configuration.userContentController.add(context.coordinator, name: "tavernBridgeConfig")
         configuration.userContentController.add(context.coordinator, name: "tavernTools")
+        configuration.userContentController.add(context.coordinator, name: "tavernDownload")
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: Self.downloadBridgeScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+        )
         configuration.userContentController.addUserScript(
             WKUserScript(
                 source: TavernToolsScript.source,
@@ -914,7 +979,7 @@ struct WebView: UIViewRepresentable {
         )
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
-        applyComfort(to: webView)
+        applyComfort(to: webView, performanceMode: performanceMode)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
@@ -932,14 +997,14 @@ struct WebView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        applyComfort(to: webView)
+        applyComfort(to: webView, performanceMode: performanceMode)
         if context.coordinator.lastReloadToken != reloadToken {
             context.coordinator.lastReloadToken = reloadToken
             webView.reload()
         }
     }
 
-    private func applyComfort(to webView: WKWebView) {
+    private func applyComfort(to webView: WKWebView, performanceMode: Bool) {
         webView.pageZoom = CGFloat(pageZoom)
         let bottom = CGFloat(bottomSafePadding)
         var inset = webView.scrollView.contentInset
@@ -950,6 +1015,7 @@ struct WebView: UIViewRepresentable {
         webView.scrollView.verticalScrollIndicatorInsets = indicatorInset
         let script = Self.comfortScript(pageZoom: pageZoom, bottomSafePadding: bottomSafePadding)
         webView.evaluateJavaScript(script)
+        webView.evaluateJavaScript(Self.performanceScript(active: performanceMode && browser.isKeyboardActive))
     }
 
     private static func comfortScript(pageZoom: Double, bottomSafePadding: Double) -> String {
@@ -964,6 +1030,19 @@ struct WebView: UIViewRepresentable {
             document.head.appendChild(style);
           }
           document.body.classList.remove('tavern-ios-native-input');
+          try {
+            if (!document.getElementById('tavern-ios-preconnect')) {
+              const link = document.createElement('link');
+              link.id = 'tavern-ios-preconnect';
+              link.rel = 'preconnect';
+              link.href = location.origin;
+              document.head.appendChild(link);
+              const dns = document.createElement('link');
+              dns.rel = 'dns-prefetch';
+              dns.href = location.origin;
+              document.head.appendChild(dns);
+            }
+          } catch (_) {}
           style.textContent = `
             :root { --tavern-ios-bottom: ${bottom}; }
             body { padding-bottom: max(10px, var(--tavern-ios-bottom)) !important; }
@@ -983,6 +1062,137 @@ struct WebView: UIViewRepresentable {
         })();
         """
     }
+
+
+
+    static func performanceScript(active: Bool) -> String {
+        let flag = active ? "true" : "false"
+        return """
+        (() => {
+          const active = \(flag);
+          let style = document.getElementById('tavern-ios-performance-style');
+          if (!style) {
+            style = document.createElement('style');
+            style.id = 'tavern-ios-performance-style';
+            document.head.appendChild(style);
+          }
+          if (active) {
+            document.documentElement.classList.add('tavern-ios-performance');
+            style.textContent = `
+              .tavern-ios-performance *, .tavern-ios-performance *::before, .tavern-ios-performance *::after {
+                transition-duration: 0.01s !important;
+                animation-duration: 0.01s !important;
+                animation-iteration-count: 1 !important;
+                scroll-behavior: auto !important;
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
+              }
+              .tavern-ios-performance #chat,
+              .tavern-ios-performance .mes,
+              .tavern-ios-performance #send_form,
+              .tavern-ios-performance #form_sheld {
+                will-change: auto !important;
+              }
+            `;
+          } else {
+            document.documentElement.classList.remove('tavern-ios-performance');
+            style.textContent = '';
+          }
+        })();
+        """
+    }
+
+    static let downloadBridgeScript = """
+    (() => {
+      if (window.__tavernDownloadBridgeInstalled) return;
+      window.__tavernDownloadBridgeInstalled = true;
+      const blobMap = new Map();
+      const safeName = (name, fallback = 'tavern-export') => {
+        const value = String(name || '').trim() || fallback;
+        return value.replace(/[\\/:*?\"<>|]+/g, '_').slice(0, 180);
+      };
+      const extFromMime = mime => {
+        const m = String(mime || '').toLowerCase();
+        if (m.includes('json')) return '.json';
+        if (m.includes('png')) return '.png';
+        if (m.includes('jpeg') || m.includes('jpg')) return '.jpg';
+        if (m.includes('webp')) return '.webp';
+        if (m.includes('zip')) return '.zip';
+        if (m.includes('yaml')) return '.yaml';
+        if (m.includes('text')) return '.txt';
+        return '';
+      };
+      const toBase64 = bytes => {
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return btoa(binary);
+      };
+      const postBlob = async (blob, filename, source) => {
+        try {
+          let name = safeName(filename);
+          if (!/\\.[a-z0-9]{2,6}$/i.test(name)) name += extFromMime(blob.type) || '.bin';
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          window.webkit?.messageHandlers?.tavernDownload?.postMessage({
+            type: 'file',
+            filename: name,
+            mime: blob.type || 'application/octet-stream',
+            base64: toBase64(bytes),
+            source: source || '网页导出'
+          });
+          return true;
+        } catch (err) {
+          try { window.webkit?.messageHandlers?.tavernDownload?.postMessage({ type: 'error', message: String(err?.message || err) }); } catch (_) {}
+          return false;
+        }
+      };
+      const originalCreateObjectURL = URL.createObjectURL.bind(URL);
+      URL.createObjectURL = function(obj) {
+        const url = originalCreateObjectURL(obj);
+        try { if (obj instanceof Blob) blobMap.set(url, obj); } catch (_) {}
+        return url;
+      };
+      const getAnchor = target => target?.closest?.('a[download], a[href^="blob:"], a[href^="data:"], a[href*="/download"], a[href*="/export"]');
+      const handleAnchor = async a => {
+        if (!a) return false;
+        const href = a.href || a.getAttribute('href') || '';
+        const filename = a.getAttribute('download') || a.dataset?.filename || a.title || 'tavern-export';
+        if (href.startsWith('blob:')) {
+          const blob = blobMap.get(href);
+          if (blob) return postBlob(blob, filename, 'blob 导出');
+        }
+        if (href.startsWith('data:')) {
+          try {
+            const blob = await fetch(href).then(r => r.blob());
+            return postBlob(blob, filename, 'data 导出');
+          } catch (_) { return false; }
+        }
+        return false;
+      };
+      document.addEventListener('click', ev => {
+        const a = getAnchor(ev.target);
+        if (!a) return;
+        const href = a.href || a.getAttribute('href') || '';
+        if (href.startsWith('blob:') || href.startsWith('data:')) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          handleAnchor(a);
+        }
+      }, true);
+      const originalClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function() {
+        const href = this.href || this.getAttribute('href') || '';
+        if (this.hasAttribute('download') && (href.startsWith('blob:') || href.startsWith('data:'))) {
+          handleAnchor(this);
+          return;
+        }
+        return originalClick.apply(this, arguments);
+      };
+      window.__tavernNativeSaveBlob = postBlob;
+    })();
+    """
 
     static let currentReplyTextScript = """
     (() => {
@@ -1130,6 +1340,7 @@ struct WebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         let browser: BrowserModel
         var observations: [NSKeyValueObservation] = []
+        var notificationTokens: [NSObjectProtocol] = []
         var lastReloadToken: UUID?
         private var completionPollTimer: Timer?
         private var completionStableTicks = 0
@@ -1164,7 +1375,14 @@ struct WebView: UIViewRepresentable {
             }
         }
 
+        deinit {
+            for token in notificationTokens {
+                NotificationCenter.default.removeObserver(token)
+            }
+        }
+
         func observe(_ webView: WKWebView) {
+            observeKeyboard(for: webView)
             observations = [
                 webView.observe(\.estimatedProgress, options: [.new]) { [weak self] view, _ in
                     Task { @MainActor in self?.browser.progress = view.estimatedProgress }
@@ -1198,6 +1416,11 @@ struct WebView: UIViewRepresentable {
             if message.name == "tavernTools",
                let payload = message.body as? [String: Any] {
                 handleTavernTools(payload)
+                return
+            }
+            if message.name == "tavernDownload",
+               let payload = message.body as? [String: Any] {
+                handleTavernDownload(payload)
                 return
             }
             if message.name == "tavernBridgeConfig",

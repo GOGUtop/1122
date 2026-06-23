@@ -14,6 +14,9 @@ final class WebPictureInPictureController: NSObject {
     private var lastFinishAt: Date?
     private var mirrorTimer: Timer?
     private var isCapturingMirror = false
+    private var generationActive = false
+    private var performanceMode = false
+    private var lastMirrorCaptureAt = Date.distantPast
 
     func attach(to webView: WKWebView) {
         guard self.webView !== webView else { return }
@@ -58,6 +61,7 @@ final class WebPictureInPictureController: NSObject {
     }
 
     func generationStarted(character: String?) {
+        generationActive = true
         lastFinishSignature = ""
         lastFinishAt = nil
         previewController.start(character: character)
@@ -76,6 +80,7 @@ final class WebPictureInPictureController: NSObject {
            Date().timeIntervalSince(lastFinishAt) < 8 {
             return
         }
+        generationActive = false
         lastFinishSignature = signature
         lastFinishAt = Date()
         previewController.finish(text: text, outcome: outcome)
@@ -88,6 +93,10 @@ final class WebPictureInPictureController: NSObject {
 
     func updateBridgeStatus(_ text: String, connected: Bool) {
         previewController.updateConnection(text, connected: connected)
+    }
+
+    func setPerformanceMode(_ active: Bool) {
+        performanceMode = active
     }
 
     @discardableResult
@@ -138,7 +147,7 @@ final class WebPictureInPictureController: NSObject {
     private func startMirrorTimer() {
         stopMirrorTimer()
         captureMirrorFrame()
-        let timer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.captureMirrorFrame()
             }
@@ -154,6 +163,9 @@ final class WebPictureInPictureController: NSObject {
     }
 
     private func captureMirrorFrame() {
+        let requiredInterval: TimeInterval = performanceMode ? 1.25 : (generationActive ? 0.42 : 0.95)
+        guard Date().timeIntervalSince(lastMirrorCaptureAt) >= requiredInterval else { return }
+        lastMirrorCaptureAt = Date()
         guard let webView, !isCapturingMirror else { return }
         guard webView.window != nil else { return }
         let bounds = webView.bounds
@@ -162,7 +174,8 @@ final class WebPictureInPictureController: NSObject {
         let config = WKSnapshotConfiguration()
         config.rect = bounds
         config.afterScreenUpdates = false
-        config.snapshotWidth = NSNumber(value: Double(min(420, bounds.width)))
+        let targetWidth: CGFloat = performanceMode ? 260 : (generationActive ? 380 : 420)
+        config.snapshotWidth = NSNumber(value: Double(min(targetWidth, bounds.width)))
         webView.takeSnapshot(with: config) { [weak self] image, _ in
             Task { @MainActor in
                 guard let self else { return }
