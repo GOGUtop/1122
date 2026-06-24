@@ -961,6 +961,7 @@ struct WebView: UIViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "tavernReply")
         configuration.userContentController.add(context.coordinator, name: "tavernBridgeConfig")
         configuration.userContentController.add(context.coordinator, name: "tavernDownload")
+        configuration.userContentController.add(context.coordinator, name: "tavernPerf")
         configuration.userContentController.addUserScript(
             WKUserScript(
                 source: Self.downloadBridgeScript,
@@ -978,6 +979,13 @@ struct WebView: UIViewRepresentable {
         configuration.userContentController.addUserScript(
             WKUserScript(
                 source: Self.roleCardBoostScript,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true
+            )
+        )
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: Self.deepSmoothScript,
                 injectionTime: .atDocumentEnd,
                 forMainFrameOnly: true
             )
@@ -1272,6 +1280,8 @@ struct WebView: UIViewRepresentable {
           img[src*="thumbnail"] {
             transform: translateZ(0) !important;
             -webkit-transform: translateZ(0) !important;
+            backface-visibility: hidden !important;
+            -webkit-backface-visibility: hidden !important;
           }
           #send_textarea,
           textarea,
@@ -1285,12 +1295,20 @@ struct WebView: UIViewRepresentable {
         `;
       };
 
+      const isBusy = () => Boolean(
+        window.__tavernIOSInputBusy ||
+        window.__tavernIOSChatLoadBusy ||
+        document.documentElement.classList.contains('tavern-ios-touch-input') ||
+        document.documentElement.classList.contains('tavern-ios-chat-load')
+      );
+
       const optimizeImages = root => {
         const scope = root?.querySelectorAll ? root : document;
-        const images = scope.querySelectorAll('img');
+        const images = Array.from(scope.querySelectorAll('img:not([data-tavern-ios-img-boost])'));
         let index = 0;
-        images.forEach(img => {
+        for (const img of images.slice(0, 80)) {
           try {
+            img.dataset.tavernIosImgBoost = '1';
             img.decoding = 'async';
             if (index > 8) img.loading = 'lazy';
             img.setAttribute('fetchpriority', index < 8 ? 'high' : 'low');
@@ -1298,32 +1316,216 @@ struct WebView: UIViewRepresentable {
             img.style.backfaceVisibility = 'hidden';
             index += 1;
           } catch (_) {}
-        });
+        }
       };
 
       let scheduled = false;
-      window.__tavernIOSRoleBoostRun = () => {
+      let pendingRoots = [];
+      window.__tavernIOSRoleBoostRun = root => {
+        if (root?.querySelectorAll) pendingRoots.push(root);
         if (scheduled) return;
         scheduled = true;
         const run = () => {
           scheduled = false;
           ensureStyle();
-          optimizeImages(document);
+          if (isBusy()) {
+            setTimeout(() => window.__tavernIOSRoleBoostRun(), 2600);
+            pendingRoots = [];
+            return;
+          }
+          const roots = pendingRoots.length ? pendingRoots.splice(0, 6) : [document];
+          pendingRoots = [];
+          for (const r of roots) optimizeImages(r);
         };
-        if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 900 });
-        else setTimeout(run, 220);
+        if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 1800 });
+        else setTimeout(run, 520);
+      };
+
+      const isInteresting = node => {
+        try {
+          if (!node || node.nodeType !== 1) return false;
+          if (node.matches?.('img,.character_select,.group_select,.avatar-container,.character_preview,#rm_characters_block,#character_popup')) return true;
+          return Boolean(node.querySelector?.('img,.character_select,.group_select,.avatar-container,.character_preview'));
+        } catch (_) { return false; }
       };
 
       window.__tavernIOSRoleBoostRun();
       const observer = new MutationObserver(mutations => {
+        if (isBusy()) return;
         for (const m of mutations) {
-          if (m.addedNodes && m.addedNodes.length) {
-            window.__tavernIOSRoleBoostRun();
-            break;
+          for (const node of m.addedNodes || []) {
+            if (isInteresting(node)) {
+              window.__tavernIOSRoleBoostRun(node);
+              return;
+            }
           }
         }
       });
       observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+    })();
+    """
+
+    static let deepSmoothScript = """
+    (() => {
+      if (window.__tavernIOSDeepSmoothInstalled) return;
+      window.__tavernIOSDeepSmoothInstalled = true;
+
+      const post = kind => {
+        try { window.webkit?.messageHandlers?.tavernPerf?.postMessage({ kind, t: Date.now() }); } catch (_) {}
+      };
+      const root = document.documentElement;
+      let inputTimer = 0;
+      let chatTimer = 0;
+
+      const ensureStyle = () => {
+        let style = document.getElementById('tavern-ios-deep-smooth-style');
+        if (!style) {
+          style = document.createElement('style');
+          style.id = 'tavern-ios-deep-smooth-style';
+          document.head.appendChild(style);
+        }
+        style.textContent = `
+          #chat, .chat {
+            -webkit-overflow-scrolling: touch !important;
+            overscroll-behavior: contain !important;
+            contain: layout style paint !important;
+            transform: translateZ(0) !important;
+            -webkit-transform: translateZ(0) !important;
+          }
+          #chat .mes, .chat .mes {
+            content-visibility: auto !important;
+            contain-intrinsic-size: 220px !important;
+            contain: layout paint style !important;
+          }
+          #chat .mes:nth-last-child(n+36), .chat .mes:nth-last-child(n+36) {
+            contain-intrinsic-size: 180px !important;
+          }
+          .mes_text, .mes_block, .mes_timer, .mes_buttons {
+            contain: layout paint style !important;
+          }
+          #send_form, #form_sheld, .send_form, #send_textarea, textarea {
+            transform: translate3d(0,0,0) !important;
+            -webkit-transform: translate3d(0,0,0) !important;
+            backface-visibility: hidden !important;
+            -webkit-backface-visibility: hidden !important;
+            will-change: transform !important;
+          }
+          html.tavern-ios-touch-input *,
+          html.tavern-ios-chat-load *,
+          html.tavern-ios-touch-input *::before,
+          html.tavern-ios-chat-load *::before,
+          html.tavern-ios-touch-input *::after,
+          html.tavern-ios-chat-load *::after {
+            transition-duration: 0.001s !important;
+            animation-duration: 0.001s !important;
+            animation-iteration-count: 1 !important;
+            scroll-behavior: auto !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            filter: none !important;
+          }
+          html.tavern-ios-chat-load #chat .mes,
+          html.tavern-ios-chat-load .chat .mes {
+            box-shadow: none !important;
+            text-shadow: none !important;
+            content-visibility: auto !important;
+            contain-intrinsic-size: 190px !important;
+          }
+          html.tavern-ios-chat-load img {
+            decoding: async !important;
+          }
+          html.tavern-ios-chat-load #bg1,
+          html.tavern-ios-chat-load #bg_custom,
+          html.tavern-ios-chat-load .bg_custom,
+          html.tavern-ios-chat-load .background {
+            opacity: 0.04 !important;
+            filter: none !important;
+            -webkit-filter: none !important;
+          }
+        `;
+      };
+      ensureStyle();
+
+      const armInput = () => {
+        window.__tavernIOSInputBusy = true;
+        root.classList.add('tavern-ios-touch-input');
+        clearTimeout(inputTimer);
+        inputTimer = setTimeout(() => {
+          window.__tavernIOSInputBusy = false;
+          root.classList.remove('tavern-ios-touch-input');
+          post('idle');
+        }, 2600);
+        post('inputTouch');
+      };
+
+      const armChatLoad = () => {
+        window.__tavernIOSChatLoadBusy = true;
+        root.classList.add('tavern-ios-chat-load');
+        clearTimeout(chatTimer);
+        chatTimer = setTimeout(() => {
+          window.__tavernIOSChatLoadBusy = false;
+          root.classList.remove('tavern-ios-chat-load');
+          post('idle');
+        }, 5600);
+        post('chatLoad');
+      };
+
+      const isInputTarget = target => Boolean(target?.closest?.('#send_textarea, textarea, [contenteditable="true"], input[type="text"], input:not([type])'));
+      const isRoleTarget = target => Boolean(target?.closest?.('#rm_characters_block .character_select, #character_popup .character_select, .character_select, .group_select, .avatar-container, [data-chid], [chid], .drawer-content .list-group-item'));
+
+      document.addEventListener('pointerdown', ev => {
+        if (isInputTarget(ev.target)) armInput();
+        else if (isRoleTarget(ev.target)) armChatLoad();
+      }, true);
+      document.addEventListener('touchstart', ev => {
+        if (isInputTarget(ev.target)) armInput();
+        else if (isRoleTarget(ev.target)) armChatLoad();
+      }, true);
+      document.addEventListener('focusin', ev => {
+        if (isInputTarget(ev.target)) armInput();
+      }, true);
+      document.addEventListener('click', ev => {
+        if (isRoleTarget(ev.target)) armChatLoad();
+      }, true);
+
+      const chat = () => document.querySelector('#chat, .chat');
+      let chatSchedule = false;
+      const chatObserver = new MutationObserver(() => {
+        if (window.__tavernIOSChatLoadBusy) return;
+        if (chatSchedule) return;
+        chatSchedule = true;
+        const run = () => {
+          chatSchedule = false;
+          try {
+            const messages = Array.from(document.querySelectorAll('#chat .mes, .chat .mes'));
+            const cut = Math.max(0, messages.length - 80);
+            for (let i = 0; i < cut; i++) messages[i].style.contentVisibility = 'auto';
+          } catch (_) {}
+        };
+        if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 1200 });
+        else setTimeout(run, 650);
+      });
+      const target = chat() || document.body;
+      try { chatObserver.observe(target, { childList: true, subtree: true }); } catch (_) {}
+
+      const historyObserver = new MutationObserver(mutations => {
+        if (window.__tavernIOSChatLoadBusy) return;
+        let messageAdds = 0;
+        for (const m of mutations) {
+          for (const node of m.addedNodes || []) {
+            try {
+              if (node.nodeType !== 1) continue;
+              if (node.matches?.('#chat .mes, .chat .mes, .mes')) messageAdds += 1;
+              else messageAdds += node.querySelectorAll?.('#chat .mes, .chat .mes, .mes')?.length || 0;
+              if (messageAdds >= 8) {
+                armChatLoad();
+                return;
+              }
+            } catch (_) {}
+          }
+        }
+      });
+      try { historyObserver.observe(document.body || document.documentElement, { childList: true, subtree: true }); } catch (_) {}
     })();
     """
 
@@ -1570,6 +1772,7 @@ struct WebView: UIViewRepresentable {
         var lastComfortSignature = ""
         var lastKeyboardPerformanceState: Bool?
         var keyboardSettleWorkItem: DispatchWorkItem?
+        var deepSmoothReleaseWorkItem: DispatchWorkItem?
         private var completionPollTimer: Timer?
         private var completionStableTicks = 0
         private var fallbackGenerationId: String?
@@ -1634,6 +1837,7 @@ struct WebView: UIViewRepresentable {
                 browser.canGoBack = webView.canGoBack
             }
             webView.evaluateJavaScript(WebView.roleCardBoostScript)
+            webView.evaluateJavaScript(WebView.deepSmoothScript)
             webView.evaluateJavaScript(WebView.replyObserverScript)
         }
 
@@ -1649,6 +1853,11 @@ struct WebView: UIViewRepresentable {
             if message.name == "tavernDownload",
                let payload = message.body as? [String: Any] {
                 handleTavernDownload(payload)
+                return
+            }
+            if message.name == "tavernPerf",
+               let payload = message.body as? [String: Any] {
+                handleTavernPerformance(payload)
                 return
             }
             if message.name == "tavernBridgeConfig",
@@ -1768,6 +1977,22 @@ struct WebView: UIViewRepresentable {
             fallbackGenerationId = nil
         }
 
+
+        private func handleTavernPerformance(_ payload: [String: Any]) {
+            guard let kind = payload["kind"] as? String else { return }
+            Task { @MainActor in
+                switch kind {
+                case "inputTouch":
+                    prepareForFastInputFocus(webView: browser.webView)
+                case "chatLoad", "roleOpen":
+                    prepareForChatHistoryLoad(webView: browser.webView)
+                case "idle":
+                    scheduleDeepSmoothRelease(webView: browser.webView)
+                default:
+                    break
+                }
+            }
+        }
 
         private func handleTavernTools(_ payload: [String: Any]) {
             guard let action = payload["action"] as? String else { return }
