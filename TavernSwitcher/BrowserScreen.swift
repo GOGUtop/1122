@@ -1101,7 +1101,38 @@ struct WebView: UIViewRepresentable {
             .drawer, .drawer-content, .popup, .modal, .list-group, #chat {
               -webkit-overflow-scrolling: touch !important;
             }
+            html.tavern-ios-focus-warm *,
+            html.tavern-ios-focus-warm *::before,
+            html.tavern-ios-focus-warm *::after {
+              transition-duration: 0.001s !important;
+              animation-duration: 0.001s !important;
+              animation-iteration-count: 1 !important;
+            }
+            html.tavern-ios-focus-warm #send_form,
+            html.tavern-ios-focus-warm #form_sheld,
+            html.tavern-ios-focus-warm #chat,
+            html.tavern-ios-focus-warm .chat {
+              transform: translateZ(0) !important;
+              -webkit-transform: translateZ(0) !important;
+              contain: layout paint style !important;
+            }
           `;
+          if (!window.__tavernIOSFastFocusInstalled) {
+            window.__tavernIOSFastFocusInstalled = true;
+            const armWarmFocus = () => {
+              try {
+                document.documentElement.classList.add('tavern-ios-focus-warm');
+                clearTimeout(window.__tavernIOSFocusWarmTimer);
+                window.__tavernIOSFocusWarmTimer = setTimeout(() => {
+                  document.documentElement.classList.remove('tavern-ios-focus-warm');
+                }, 950);
+              } catch (_) {}
+            };
+            const isInputTarget = target => Boolean(target?.closest?.('#send_textarea, textarea, [contenteditable="true"], input'));
+            document.addEventListener('pointerdown', ev => { if (isInputTarget(ev.target)) armWarmFocus(); }, true);
+            document.addEventListener('touchstart', ev => { if (isInputTarget(ev.target)) armWarmFocus(); }, true);
+            document.addEventListener('focusin', ev => { if (isInputTarget(ev.target)) armWarmFocus(); }, true);
+          }
         })();
         """
     }
@@ -1538,6 +1569,7 @@ struct WebView: UIViewRepresentable {
         var lastReloadToken: UUID?
         var lastComfortSignature = ""
         var lastKeyboardPerformanceState: Bool?
+        var keyboardSettleWorkItem: DispatchWorkItem?
         private var completionPollTimer: Timer?
         private var completionStableTicks = 0
         private var fallbackGenerationId: String?
