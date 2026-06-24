@@ -89,6 +89,7 @@ struct BrowserScreen: View {
                     containerSize: proxy.size,
                     canGoBack: browser.canGoBack,
                     isGenerating: browser.isGenerating,
+                    isKeyboardActive: browser.isKeyboardActive,
                     onBack: { browser.webView?.goBack() },
                     onReload: { browser.webView?.reload() },
                     onPortal: { appState.activeEndpoint = nil },
@@ -440,6 +441,7 @@ private struct FloatingDock: View {
     let containerSize: CGSize
     let canGoBack: Bool
     let isGenerating: Bool
+    let isKeyboardActive: Bool
     let onBack: () -> Void
     let onReload: () -> Void
     let onPortal: () -> Void
@@ -453,14 +455,16 @@ private struct FloatingDock: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 12) {
-            if showControls {
+            if showControls && !isKeyboardActive {
                 liquidPanel
                     .transition(.scale(scale: 0.88, anchor: .bottomTrailing).combined(with: .opacity))
             }
 
-            liquidOrb
+            if !isKeyboardActive {
+                liquidOrb
+            }
         }
-        .opacity(opacity)
+        .opacity(isKeyboardActive ? 0.0 : opacity)
         .position(resolvedPosition)
         .gesture(
             DragGesture(minimumDistance: 4)
@@ -490,6 +494,15 @@ private struct FloatingDock: View {
             }
             if !showControls { position = snapToEdge(position) }
             savePosition()
+        }
+        .onChange(of: isKeyboardActive) { active in
+            if active && showControls {
+                withAnimation(.easeOut(duration: 0.12)) {
+                    showControls = false
+                    position = snapToEdge(position)
+                }
+                savePosition()
+            }
         }
     }
 
@@ -758,7 +771,7 @@ private struct FloatingSettingsView: View {
                         }
 
                         settingsCard("丝滑性能", systemImage: "speedometer") {
-                            Toggle("键盘/滚动时自动降负载", isOn: Binding(
+                            Toggle("极速模式（推荐开启）", isOn: Binding(
                                 get: { appState.performanceMode },
                                 set: { appState.savePerformanceMode($0) }
                             ))
@@ -768,7 +781,7 @@ private struct FloatingSettingsView: View {
                                 set: { appState.saveDownloadAutoShare($0) }
                             ))
                             .tint(Color(red: 0.45, green: 0.78, blue: 1.0))
-                            Text("键盘动画、滚动和打字时会临时降低画中画镜像与液态模糊负载；导出角色卡/世界书/正则/预设时自动接管下载。")
+                            Text("关闭画中画网页截图后，极速模式会持续降低网页动画、阴影、毛玻璃和滚动负载；导出角色卡/世界书/正则/预设时自动接管下载。")
                                 .font(.caption)
                                 .foregroundStyle(.white.opacity(0.62))
                         }
@@ -947,7 +960,6 @@ struct WebView: UIViewRepresentable {
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.userContentController.add(context.coordinator, name: "tavernReply")
         configuration.userContentController.add(context.coordinator, name: "tavernBridgeConfig")
-        configuration.userContentController.add(context.coordinator, name: "tavernTools")
         configuration.userContentController.add(context.coordinator, name: "tavernDownload")
         configuration.userContentController.addUserScript(
             WKUserScript(
@@ -958,14 +970,14 @@ struct WebView: UIViewRepresentable {
         )
         configuration.userContentController.addUserScript(
             WKUserScript(
-                source: TavernToolsScript.source,
+                source: Self.comfortScript(pageZoom: pageZoom, bottomSafePadding: bottomSafePadding),
                 injectionTime: .atDocumentEnd,
                 forMainFrameOnly: true
             )
         )
         configuration.userContentController.addUserScript(
             WKUserScript(
-                source: Self.comfortScript(pageZoom: pageZoom, bottomSafePadding: bottomSafePadding),
+                source: Self.roleCardBoostScript,
                 injectionTime: .atDocumentEnd,
                 forMainFrameOnly: true
             )
@@ -979,11 +991,15 @@ struct WebView: UIViewRepresentable {
         )
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
-        applyComfort(to: webView, performanceMode: performanceMode)
+        applyComfort(to: webView, performanceMode: performanceMode, force: true, coordinator: context.coordinator)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        // interactive 键盘下拉会持续触发布局回流，长聊天时很卡；onDrag 更接近原生丝滑收起。
+        webView.scrollView.keyboardDismissMode = .onDrag
+        webView.scrollView.layer.drawsAsynchronously = true
+        webView.layer.drawsAsynchronously = true
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1 TavernSwitcher/1.0"
         if #available(iOS 16.4, *) {
             webView.isInspectable = true
@@ -997,25 +1013,39 @@ struct WebView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        applyComfort(to: webView, performanceMode: performanceMode)
+        applyComfort(to: webView, performanceMode: performanceMode, coordinator: context.coordinator)
         if context.coordinator.lastReloadToken != reloadToken {
             context.coordinator.lastReloadToken = reloadToken
             webView.reload()
         }
     }
 
-    private func applyComfort(to webView: WKWebView, performanceMode: Bool) {
+    private func applyComfort(
+        to webView: WKWebView,
+        performanceMode: Bool,
+        force: Bool = false,
+        coordinator: Coordinator? = nil
+    ) {
+        let activePerformance = performanceMode || browser.isKeyboardActive
+        let signature = "\(Int(pageZoom * 1000))-\(Int(bottomSafePadding))-\(activePerformance)"
+        if !force, coordinator?.lastComfortSignature == signature { return }
+        coordinator?.lastComfortSignature = signature
+
         webView.pageZoom = CGFloat(pageZoom)
         let bottom = CGFloat(bottomSafePadding)
         var inset = webView.scrollView.contentInset
-        inset.bottom = bottom
-        webView.scrollView.contentInset = inset
+        if abs(inset.bottom - bottom) > 0.5 {
+            inset.bottom = bottom
+            webView.scrollView.contentInset = inset
+        }
         var indicatorInset = webView.scrollView.verticalScrollIndicatorInsets
-        indicatorInset.bottom = bottom
-        webView.scrollView.verticalScrollIndicatorInsets = indicatorInset
-        let script = Self.comfortScript(pageZoom: pageZoom, bottomSafePadding: bottomSafePadding)
-        webView.evaluateJavaScript(script)
-        webView.evaluateJavaScript(Self.performanceScript(active: performanceMode && browser.isKeyboardActive))
+        if abs(indicatorInset.bottom - bottom) > 0.5 {
+            indicatorInset.bottom = bottom
+            webView.scrollView.verticalScrollIndicatorInsets = indicatorInset
+        }
+
+        webView.evaluateJavaScript(Self.comfortScript(pageZoom: pageZoom, bottomSafePadding: bottomSafePadding))
+        webView.evaluateJavaScript(Self.performanceScript(active: activePerformance))
     }
 
     private static func comfortScript(pageZoom: Double, bottomSafePadding: Double) -> String {
@@ -1046,10 +1076,17 @@ struct WebView: UIViewRepresentable {
           style.textContent = `
             :root { --tavern-ios-bottom: ${bottom}; }
             body { padding-bottom: max(10px, var(--tavern-ios-bottom)) !important; }
+            html, body {
+              -webkit-text-size-adjust: 100% !important;
+              touch-action: pan-y manipulation;
+            }
             #send_form, #form_sheld, .send_form, form:has(#send_textarea) {
               bottom: max(10px, env(safe-area-inset-bottom)) !important;
               margin-bottom: max(var(--tavern-ios-bottom), env(safe-area-inset-bottom)) !important;
               padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+              transform: translateZ(0) !important;
+              will-change: transform !important;
+              contain: layout paint style !important;
             }
             #send_but, #mes_stop, button[title*="发送"], button[aria-label*="发送"], button[title*="Send"], button[aria-label*="Send"] {
               min-width: 46px !important;
@@ -1057,6 +1094,12 @@ struct WebView: UIViewRepresentable {
             }
             #send_textarea, textarea {
               min-height: 44px !important;
+              resize: none !important;
+              transform: translateZ(0) !important;
+              -webkit-transform: translateZ(0) !important;
+            }
+            .drawer, .drawer-content, .popup, .modal, .list-group, #chat {
+              -webkit-overflow-scrolling: touch !important;
             }
           `;
         })();
@@ -1079,19 +1122,80 @@ struct WebView: UIViewRepresentable {
           if (active) {
             document.documentElement.classList.add('tavern-ios-performance');
             style.textContent = `
+              .tavern-ios-performance,
+              .tavern-ios-performance body {
+                scroll-behavior: auto !important;
+                overscroll-behavior: contain !important;
+              }
               .tavern-ios-performance *, .tavern-ios-performance *::before, .tavern-ios-performance *::after {
-                transition-duration: 0.01s !important;
-                animation-duration: 0.01s !important;
+                transition-duration: 0.001s !important;
+                animation-duration: 0.001s !important;
                 animation-iteration-count: 1 !important;
                 scroll-behavior: auto !important;
                 backdrop-filter: none !important;
                 -webkit-backdrop-filter: none !important;
+                filter: none !important;
               }
-              .tavern-ios-performance #chat,
+              .tavern-ios-performance #bg1,
+              .tavern-ios-performance #bg_custom,
+              .tavern-ios-performance .bg_custom,
+              .tavern-ios-performance .drawer-content,
+              .tavern-ios-performance .popup,
               .tavern-ios-performance .mes,
               .tavern-ios-performance #send_form,
               .tavern-ios-performance #form_sheld {
+                box-shadow: none !important;
+                text-shadow: none !important;
                 will-change: auto !important;
+              }
+              .tavern-ios-performance #chat .mes,
+              .tavern-ios-performance .chat .mes {
+                content-visibility: auto;
+                contain-intrinsic-size: 220px;
+              }
+              .tavern-ios-performance .mes_text {
+                contain: layout paint style;
+              }
+              .tavern-ios-performance #chat .mes:nth-last-child(n+30),
+              .tavern-ios-performance .chat .mes:nth-last-child(n+30) {
+                content-visibility: auto !important;
+                contain-intrinsic-size: 190px !important;
+              }
+              .tavern-ios-performance #rm_characters_block .character_select,
+              .tavern-ios-performance #character_popup .character_select,
+              .tavern-ios-performance .character_select,
+              .tavern-ios-performance .avatar-container,
+              .tavern-ios-performance .character_preview,
+              .tavern-ios-performance .group_select {
+                content-visibility: auto !important;
+                contain-intrinsic-size: 108px !important;
+                contain: layout paint style !important;
+                box-shadow: none !important;
+                filter: none !important;
+                -webkit-filter: none !important;
+              }
+              .tavern-ios-performance #bg1,
+              .tavern-ios-performance #bg_custom,
+              .tavern-ios-performance .bg_custom,
+              .tavern-ios-performance .background,
+              .tavern-ios-performance .animated-background {
+                opacity: 0.08 !important;
+                filter: none !important;
+                -webkit-filter: none !important;
+                transform: none !important;
+              }
+              .tavern-ios-performance #chat,
+              .tavern-ios-performance .chat,
+              .tavern-ios-performance #send_form {
+                transform: translateZ(0) !important;
+                -webkit-transform: translateZ(0) !important;
+              }
+              .tavern-ios-performance img {
+                image-rendering: auto !important;
+              }
+              .tavern-ios-performance video,
+              .tavern-ios-performance canvas {
+                animation: none !important;
               }
             `;
           } else {
@@ -1101,6 +1205,96 @@ struct WebView: UIViewRepresentable {
         })();
         """
     }
+
+    static let roleCardBoostScript = """
+    (() => {
+      if (window.__tavernIOSRoleBoostInstalled) {
+        try { window.__tavernIOSRoleBoostRun?.(); } catch (_) {}
+        return;
+      }
+      window.__tavernIOSRoleBoostInstalled = true;
+
+      const ensureStyle = () => {
+        let style = document.getElementById('tavern-ios-role-boost-style');
+        if (!style) {
+          style = document.createElement('style');
+          style.id = 'tavern-ios-role-boost-style';
+          document.head.appendChild(style);
+        }
+        style.textContent = `
+          #rm_characters_block .character_select,
+          #character_popup .character_select,
+          .character_select,
+          .group_select,
+          .avatar-container,
+          .character_preview {
+            content-visibility: auto !important;
+            contain-intrinsic-size: 108px !important;
+            contain: layout paint style !important;
+          }
+          #rm_characters_block img,
+          #character_popup img,
+          .character_select img,
+          .group_select img,
+          .avatar img,
+          img[src*="avatar"],
+          img[src*="thumbnail"] {
+            transform: translateZ(0) !important;
+            -webkit-transform: translateZ(0) !important;
+          }
+          #send_textarea,
+          textarea,
+          #send_form,
+          #form_sheld {
+            transform: translateZ(0) !important;
+            -webkit-transform: translateZ(0) !important;
+            backface-visibility: hidden !important;
+            -webkit-backface-visibility: hidden !important;
+          }
+        `;
+      };
+
+      const optimizeImages = root => {
+        const scope = root?.querySelectorAll ? root : document;
+        const images = scope.querySelectorAll('img');
+        let index = 0;
+        images.forEach(img => {
+          try {
+            img.decoding = 'async';
+            if (index > 8) img.loading = 'lazy';
+            img.setAttribute('fetchpriority', index < 8 ? 'high' : 'low');
+            img.style.willChange = 'auto';
+            img.style.backfaceVisibility = 'hidden';
+            index += 1;
+          } catch (_) {}
+        });
+      };
+
+      let scheduled = false;
+      window.__tavernIOSRoleBoostRun = () => {
+        if (scheduled) return;
+        scheduled = true;
+        const run = () => {
+          scheduled = false;
+          ensureStyle();
+          optimizeImages(document);
+        };
+        if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 900 });
+        else setTimeout(run, 220);
+      };
+
+      window.__tavernIOSRoleBoostRun();
+      const observer = new MutationObserver(mutations => {
+        for (const m of mutations) {
+          if (m.addedNodes && m.addedNodes.length) {
+            window.__tavernIOSRoleBoostRun();
+            break;
+          }
+        }
+      });
+      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+    })();
+    """
 
     static let downloadBridgeScript = """
     (() => {
@@ -1342,6 +1536,8 @@ struct WebView: UIViewRepresentable {
         var observations: [NSKeyValueObservation] = []
         var notificationTokens: [NSObjectProtocol] = []
         var lastReloadToken: UUID?
+        var lastComfortSignature = ""
+        var lastKeyboardPerformanceState: Bool?
         private var completionPollTimer: Timer?
         private var completionStableTicks = 0
         private var fallbackGenerationId: String?
@@ -1405,8 +1601,8 @@ struct WebView: UIViewRepresentable {
                 browser.isLoading = false
                 browser.canGoBack = webView.canGoBack
             }
+            webView.evaluateJavaScript(WebView.roleCardBoostScript)
             webView.evaluateJavaScript(WebView.replyObserverScript)
-            webView.evaluateJavaScript(TavernToolsScript.source)
         }
 
         func userContentController(

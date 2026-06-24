@@ -34,15 +34,11 @@ final class WebPictureInPictureController: NSObject {
         let delegate = PiPControllerDelegate()
         delegate.onStop = { [weak self] in
             Task { @MainActor in
-                self?.stopMirrorTimer()
-                self?.previewController.setMirrorMode(false)
                 BackgroundKeepAliveService.shared.stop(reason: "pip")
             }
         }
         delegate.onFailed = { [weak self] _ in
             Task { @MainActor in
-                self?.stopMirrorTimer()
-                self?.previewController.setMirrorMode(false)
                 BackgroundKeepAliveService.shared.stop(reason: "pip")
             }
         }
@@ -114,8 +110,7 @@ final class WebPictureInPictureController: NSObject {
 
         configureAudioSession()
         BackgroundKeepAliveService.shared.start(reason: "pip")
-        previewController.setMirrorMode(true)
-        startMirrorTimer()
+        previewController.setMirrorMode(false)
         startWhenReady(controller, retries: 30)
         return true
     }
@@ -125,7 +120,6 @@ final class WebPictureInPictureController: NSObject {
         guard let controller else { return false }
         if controller.isPictureInPictureActive {
             controller.stopPictureInPicture()
-            stopMirrorTimer()
             previewController.setMirrorMode(false)
             BackgroundKeepAliveService.shared.stop(reason: "pip")
             return true
@@ -292,7 +286,7 @@ private final class LiveReplyPiPViewController: AVPictureInPictureVideoCallViewC
 
         inputLabel.font = .systemFont(ofSize: 10.5, weight: .semibold)
         inputLabel.textColor = UIColor.white.withAlphaComponent(0.58)
-        inputLabel.text = "缩小版酒馆镜像 · 等待生成"
+        inputLabel.text = "实时回复预览 · 等待生成"
 
         finishBanner.layer.cornerRadius = 17
         finishBanner.layer.cornerCurve = .continuous
@@ -439,8 +433,8 @@ private final class LiveReplyPiPViewController: AVPictureInPictureVideoCallViewC
         hideFinishBanner(animated: false)
         statusPill.text = "待机"
         roleLabel.text = "正在等待回复"
-        inputLabel.text = "网页镜像 · 等待生成"
-        textView.text = "画中画会优先显示酒馆网页镜像；后台网页冻结时，用实时桥接文字兜底。"
+        inputLabel.text = "实时回复预览 · 等待生成"
+        textView.text = "画中画已改为轻量实时回复预览，不再截取网页画面，主酒馆会更流畅。"
     }
 
     func start(character: String?) {
@@ -492,7 +486,7 @@ private final class LiveReplyPiPViewController: AVPictureInPictureVideoCallViewC
             }
         } else if fullText.isEmpty && !activity.isAnimating {
             statusPill.text = "已连接"
-            inputLabel.text = "网页镜像 · 等待生成"
+            inputLabel.text = "实时回复预览 · 等待生成"
         }
     }
 

@@ -20,7 +20,7 @@ extension WebView.Coordinator {
         let didShow = center.addObserver(forName: UIResponder.keyboardDidShowNotification, object: nil, queue: .main) { [weak self, weak webView] _ in
             guard let self else { return }
             Task { @MainActor in
-                self.setKeyboardPerformanceMode(false, webView: webView, delay: 0.16)
+                self.setKeyboardPerformanceMode(true, webView: webView)
             }
         }
         let didHide = center.addObserver(forName: UIResponder.keyboardDidHideNotification, object: nil, queue: .main) { [weak self, weak webView] _ in
@@ -37,12 +37,22 @@ extension WebView.Coordinator {
         let work = { [weak self, weak webView] in
             guard let self else { return }
             let enabled = UserDefaults.standard.object(forKey: "performanceMode") as? Bool ?? true
-            self.browser.isKeyboardActive = active && enabled
-            self.browser.pictureInPicture.setPerformanceMode(active && enabled)
+            let targetState = active && enabled
+
+            // 键盘弹出/收回时最容易卡：不要在 willShow / didShow / willHide 连续重复注入 JS。
+            // 只在状态真正变化时切换一次，避免输入框动画期间主线程被 evaluateJavaScript 抢占。
+            if self.lastKeyboardPerformanceState == targetState {
+                self.browser.isKeyboardActive = targetState
+                return
+            }
+            self.lastKeyboardPerformanceState = targetState
+            self.browser.isKeyboardActive = targetState
+            self.browser.pictureInPicture.setPerformanceMode(targetState)
             guard let webView else { return }
             webView.scrollView.layer.removeAllAnimations()
             webView.layer.removeAllAnimations()
-            webView.evaluateJavaScript(WebView.performanceScript(active: active && enabled))
+            webView.evaluateJavaScript(WebView.performanceScript(active: enabled))
+            webView.evaluateJavaScript(WebView.roleCardBoostScript)
         }
         if delay > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
