@@ -54,7 +54,7 @@ struct BrowserScreen: View {
                             .font(.subheadline.bold())
                     }
                     .padding(22)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+                    .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 20))
                     .shadow(radius: 12)
                     .zIndex(10)
                 }
@@ -386,7 +386,7 @@ struct BrowserScreen: View {
         }
         .padding(24)
         .frame(maxWidth: 300)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
+        .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 24))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -423,7 +423,7 @@ private struct RangeCaptureBar: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .padding(.horizontal, 14)
         .padding(.bottom, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -563,7 +563,7 @@ private struct FloatingDock: View {
         .background(
             ZStack {
                 RoundedRectangle(cornerRadius: 32, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color.black.opacity(0.82))
                 RoundedRectangle(cornerRadius: 32, style: .continuous)
                     .fill(
                         LinearGradient(
@@ -581,7 +581,7 @@ private struct FloatingDock: View {
                     lineWidth: 1
                 )
         )
-        .shadow(color: .black.opacity(0.34), radius: 28, x: 0, y: 14)
+        .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 5)
     }
 
     private var liquidOrb: some View {
@@ -731,7 +731,7 @@ private extension View {
             .foregroundStyle(.white)
             .padding(.horizontal, 15)
             .frame(height: 42)
-            .background(.ultraThinMaterial, in: Capsule())
+            .background(Color.black.opacity(0.72), in: Capsule())
             .overlay(Capsule().stroke(.white.opacity(0.22)))
     }
 }
@@ -885,7 +885,7 @@ private struct FloatingSettingsView: View {
         .foregroundStyle(.white)
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .background(Color.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .stroke(
@@ -893,7 +893,7 @@ private struct FloatingSettingsView: View {
                     lineWidth: 1
                 )
         )
-        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
     }
 }
 
@@ -978,15 +978,8 @@ struct WebView: UIViewRepresentable {
         )
         configuration.userContentController.addUserScript(
             WKUserScript(
-                source: Self.roleCardBoostScript,
-                injectionTime: .atDocumentEnd,
-                forMainFrameOnly: true
-            )
-        )
-        configuration.userContentController.addUserScript(
-            WKUserScript(
-                source: Self.deepSmoothScript,
-                injectionTime: .atDocumentEnd,
+                source: Self.ultraLightStartScript,
+                injectionTime: .atDocumentStart,
                 forMainFrameOnly: true
             )
         )
@@ -1034,7 +1027,7 @@ struct WebView: UIViewRepresentable {
         force: Bool = false,
         coordinator: Coordinator? = nil
     ) {
-        let activePerformance = performanceMode || browser.isKeyboardActive
+        let activePerformance = performanceMode
         let signature = "\(Int(pageZoom * 1000))-\(Int(bottomSafePadding))-\(activePerformance)"
         if !force, coordinator?.lastComfortSignature == signature { return }
         coordinator?.lastComfortSignature = signature
@@ -1109,17 +1102,12 @@ struct WebView: UIViewRepresentable {
             .drawer, .drawer-content, .popup, .modal, .list-group, #chat {
               -webkit-overflow-scrolling: touch !important;
             }
-            html.tavern-ios-focus-warm *,
-            html.tavern-ios-focus-warm *::before,
-            html.tavern-ios-focus-warm *::after {
-              transition-duration: 0.001s !important;
-              animation-duration: 0.001s !important;
-              animation-iteration-count: 1 !important;
-            }
             html.tavern-ios-focus-warm #send_form,
             html.tavern-ios-focus-warm #form_sheld,
-            html.tavern-ios-focus-warm #chat,
-            html.tavern-ios-focus-warm .chat {
+            html.tavern-ios-focus-warm #send_textarea,
+            html.tavern-ios-focus-warm textarea {
+              transition-duration: 0.001s !important;
+              animation-duration: 0.001s !important;
               transform: translateZ(0) !important;
               -webkit-transform: translateZ(0) !important;
               contain: layout paint style !important;
@@ -1151,99 +1139,142 @@ struct WebView: UIViewRepresentable {
         let flag = active ? "true" : "false"
         return """
         (() => {
-          const active = \(flag);
-          let style = document.getElementById('tavern-ios-performance-style');
-          if (!style) {
-            style = document.createElement('style');
-            style.id = 'tavern-ios-performance-style';
-            document.head.appendChild(style);
-          }
-          if (active) {
-            document.documentElement.classList.add('tavern-ios-performance');
-            style.textContent = `
-              .tavern-ios-performance,
-              .tavern-ios-performance body {
-                scroll-behavior: auto !important;
-                overscroll-behavior: contain !important;
-              }
-              .tavern-ios-performance *, .tavern-ios-performance *::before, .tavern-ios-performance *::after {
-                transition-duration: 0.001s !important;
-                animation-duration: 0.001s !important;
-                animation-iteration-count: 1 !important;
-                scroll-behavior: auto !important;
-                backdrop-filter: none !important;
-                -webkit-backdrop-filter: none !important;
-                filter: none !important;
-              }
-              .tavern-ios-performance #bg1,
-              .tavern-ios-performance #bg_custom,
-              .tavern-ios-performance .bg_custom,
-              .tavern-ios-performance .drawer-content,
-              .tavern-ios-performance .popup,
-              .tavern-ios-performance .mes,
-              .tavern-ios-performance #send_form,
-              .tavern-ios-performance #form_sheld {
-                box-shadow: none !important;
-                text-shadow: none !important;
-                will-change: auto !important;
-              }
-              .tavern-ios-performance #chat .mes,
-              .tavern-ios-performance .chat .mes {
-                content-visibility: auto;
-                contain-intrinsic-size: 220px;
-              }
-              .tavern-ios-performance .mes_text {
-                contain: layout paint style;
-              }
-              .tavern-ios-performance #chat .mes:nth-last-child(n+30),
-              .tavern-ios-performance .chat .mes:nth-last-child(n+30) {
-                content-visibility: auto !important;
-                contain-intrinsic-size: 190px !important;
-              }
-              .tavern-ios-performance #rm_characters_block .character_select,
-              .tavern-ios-performance #character_popup .character_select,
-              .tavern-ios-performance .character_select,
-              .tavern-ios-performance .avatar-container,
-              .tavern-ios-performance .character_preview,
-              .tavern-ios-performance .group_select {
-                content-visibility: auto !important;
-                contain-intrinsic-size: 108px !important;
-                contain: layout paint style !important;
-                box-shadow: none !important;
-                filter: none !important;
-                -webkit-filter: none !important;
-              }
-              .tavern-ios-performance #bg1,
-              .tavern-ios-performance #bg_custom,
-              .tavern-ios-performance .bg_custom,
-              .tavern-ios-performance .background,
-              .tavern-ios-performance .animated-background {
-                opacity: 0.08 !important;
-                filter: none !important;
-                -webkit-filter: none !important;
-                transform: none !important;
-              }
-              .tavern-ios-performance #chat,
-              .tavern-ios-performance .chat,
-              .tavern-ios-performance #send_form {
-                transform: translateZ(0) !important;
-                -webkit-transform: translateZ(0) !important;
-              }
-              .tavern-ios-performance img {
-                image-rendering: auto !important;
-              }
-              .tavern-ios-performance video,
-              .tavern-ios-performance canvas {
-                animation: none !important;
-              }
-            `;
-          } else {
-            document.documentElement.classList.remove('tavern-ios-performance');
-            style.textContent = '';
-          }
+          try {
+            const active = \(flag);
+            document.documentElement.classList.toggle('tavern-ios-performance', active);
+          } catch (_) {}
         })();
         """
     }
+
+    static let ultraLightStartScript = """
+    (() => {
+      if (window.__tavernIOSUltraLightInstalled) return;
+      window.__tavernIOSUltraLightInstalled = true;
+      const style = document.createElement('style');
+      style.id = 'tavern-ios-ultra-light-style';
+      style.textContent = `
+        html, body {
+          -webkit-text-size-adjust: 100% !important;
+          scroll-behavior: auto !important;
+          overscroll-behavior: contain !important;
+        }
+        *, *::before, *::after {
+          animation-duration: 0.001s !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.001s !important;
+          scroll-behavior: auto !important;
+        }
+        #chat, .chat {
+          -webkit-overflow-scrolling: touch !important;
+          overscroll-behavior: contain !important;
+          contain: layout style paint !important;
+          transform: translateZ(0) !important;
+          -webkit-transform: translateZ(0) !important;
+        }
+        #chat .mes, .chat .mes {
+          content-visibility: auto !important;
+          contain-intrinsic-size: 185px !important;
+          contain: layout paint style !important;
+          box-shadow: none !important;
+          text-shadow: none !important;
+        }
+        #chat .mes:nth-last-child(n+70), .chat .mes:nth-last-child(n+70) {
+          contain-intrinsic-size: 150px !important;
+        }
+        /* iOS 极限流畅：只渲染最近 90 条消息，旧消息不参与绘制，显著降低长聊天卡顿。 */
+        #chat .mes:nth-last-child(n+91), .chat .mes:nth-last-child(n+91) {
+          display: none !important;
+        }
+        .mes_text, .mes_block, .mes_timer, .mes_buttons {
+          contain: layout paint style !important;
+          text-shadow: none !important;
+        }
+        #send_form, #form_sheld, .send_form, #send_textarea, textarea {
+          transform: translate3d(0,0,0) !important;
+          -webkit-transform: translate3d(0,0,0) !important;
+          backface-visibility: hidden !important;
+          -webkit-backface-visibility: hidden !important;
+          will-change: auto !important;
+        }
+        #rm_characters_block .character_select,
+        #character_popup .character_select,
+        .character_select,
+        .group_select,
+        .avatar-container,
+        .character_preview {
+          content-visibility: auto !important;
+          contain-intrinsic-size: 104px !important;
+          contain: layout paint style !important;
+          box-shadow: none !important;
+          filter: none !important;
+          -webkit-filter: none !important;
+        }
+        #bg1, #bg_custom, .bg_custom, .background, .animated-background {
+          opacity: 0.035 !important;
+          filter: none !important;
+          -webkit-filter: none !important;
+          transform: none !important;
+        }
+        .drawer-content, .popup, .modal, .menu, .list-group-item, .character_select {
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+          box-shadow: none !important;
+        }
+        html.tavern-ios-chat-load #chat .mes,
+        html.tavern-ios-chat-load .chat .mes {
+          contain-intrinsic-size: 150px !important;
+          box-shadow: none !important;
+        }
+        html.tavern-ios-chat-load img,
+        html.tavern-ios-touch-input img {
+          visibility: hidden !important;
+        }
+      `;
+      (document.head || document.documentElement).appendChild(style);
+
+      const root = document.documentElement;
+      let inputTimer = 0;
+      let chatTimer = 0;
+      const armInput = () => {
+        root.classList.add('tavern-ios-touch-input');
+        window.__tavernIOSInputBusy = true;
+        clearTimeout(inputTimer);
+        inputTimer = setTimeout(() => {
+          window.__tavernIOSInputBusy = false;
+          root.classList.remove('tavern-ios-touch-input');
+        }, 1800);
+      };
+      const armChat = () => {
+        root.classList.add('tavern-ios-chat-load');
+        window.__tavernIOSChatLoadBusy = true;
+        clearTimeout(chatTimer);
+        chatTimer = setTimeout(() => {
+          window.__tavernIOSChatLoadBusy = false;
+          root.classList.remove('tavern-ios-chat-load');
+        }, 4200);
+      };
+      const isInput = t => Boolean(t?.closest?.('#send_textarea, textarea, [contenteditable="true"], input[type="text"], input:not([type])'));
+      const isRole = t => Boolean(t?.closest?.('#rm_characters_block .character_select, #character_popup .character_select, .character_select, .group_select, .avatar-container, [data-chid], [chid]'));
+      document.addEventListener('pointerdown', e => { if (isInput(e.target)) armInput(); else if (isRole(e.target)) armChat(); }, true);
+      document.addEventListener('touchstart', e => { if (isInput(e.target)) armInput(); else if (isRole(e.target)) armChat(); }, true);
+      document.addEventListener('focusin', e => { if (isInput(e.target)) armInput(); }, true);
+      document.addEventListener('click', e => { if (isRole(e.target)) armChat(); }, true);
+
+      const optimizeOnce = () => {
+        try {
+          document.querySelectorAll('img').forEach((img, i) => {
+            img.decoding = 'async';
+            if (i > 8) img.loading = 'lazy';
+            img.setAttribute('fetchpriority', i < 8 ? 'high' : 'low');
+            img.style.willChange = 'auto';
+          });
+        } catch (_) {}
+      };
+      if ('requestIdleCallback' in window) requestIdleCallback(optimizeOnce, { timeout: 2200 });
+      else setTimeout(optimizeOnce, 1600);
+    })();
+    """
 
     static let roleCardBoostScript = """
     (() => {
@@ -1836,8 +1867,6 @@ struct WebView: UIViewRepresentable {
                 browser.isLoading = false
                 browser.canGoBack = webView.canGoBack
             }
-            webView.evaluateJavaScript(WebView.roleCardBoostScript)
-            webView.evaluateJavaScript(WebView.deepSmoothScript)
             webView.evaluateJavaScript(WebView.replyObserverScript)
         }
 

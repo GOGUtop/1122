@@ -10,8 +10,7 @@ extension WebView.Coordinator {
             guard let self else { return }
             Task { @MainActor in
                 self.cancelKeyboardSettle()
-                self.cancelDeepSmoothRelease()
-                self.setKeyboardPerformanceMode(true, webView: webView, lightweightOnly: true)
+                self.setKeyboardPerformanceMode(true, webView: webView)
             }
         }
 
@@ -19,17 +18,14 @@ extension WebView.Coordinator {
             guard let self else { return }
             Task { @MainActor in
                 self.cancelKeyboardSettle()
-                self.cancelDeepSmoothRelease()
-                self.setKeyboardPerformanceMode(true, webView: webView, lightweightOnly: true)
+                self.setKeyboardPerformanceMode(true, webView: webView)
             }
         }
 
         let didShow = center.addObserver(forName: UIResponder.keyboardDidShowNotification, object: nil, queue: .main) { [weak self, weak webView] _ in
             guard let self else { return }
             Task { @MainActor in
-                self.cancelKeyboardSettle()
-                self.cancelDeepSmoothRelease()
-                self.setKeyboardPerformanceMode(true, webView: webView, lightweightOnly: true)
+                self.setKeyboardPerformanceMode(true, webView: webView)
             }
         }
 
@@ -46,80 +42,29 @@ extension WebView.Coordinator {
     @MainActor
     func prepareForFastInputFocus(webView: WKWebView?) {
         cancelKeyboardSettle()
-        cancelDeepSmoothRelease()
-        setKeyboardPerformanceMode(true, webView: webView, lightweightOnly: true)
+        setKeyboardPerformanceMode(true, webView: webView)
         webView?.scrollView.layer.removeAllAnimations()
         webView?.layer.removeAllAnimations()
-        webView?.evaluateJavaScript("""
-        (() => {
-          try {
-            window.__tavernIOSInputBusy = true;
-            document.documentElement.classList.add('tavern-ios-touch-input');
-            clearTimeout(window.__tavernIOSNativeInputBusyTimer);
-            window.__tavernIOSNativeInputBusyTimer = setTimeout(() => {
-              window.__tavernIOSInputBusy = false;
-              document.documentElement.classList.remove('tavern-ios-touch-input');
-            }, 2600);
-          } catch (_) {}
-        })();
-        """)
     }
 
     @MainActor
     func prepareForChatHistoryLoad(webView: WKWebView?) {
         cancelKeyboardSettle()
-        cancelDeepSmoothRelease()
-        browser.isKeyboardActive = false
-        browser.pictureInPicture.setPerformanceMode(true)
+        setKeyboardPerformanceMode(true, webView: webView)
         webView?.scrollView.layer.removeAllAnimations()
         webView?.layer.removeAllAnimations()
-        webView?.evaluateJavaScript("""
-        (() => {
-          try {
-            window.__tavernIOSChatLoadBusy = true;
-            document.documentElement.classList.add('tavern-ios-chat-load');
-            clearTimeout(window.__tavernIOSChatLoadTimer);
-            window.__tavernIOSChatLoadTimer = setTimeout(() => {
-              window.__tavernIOSChatLoadBusy = false;
-              document.documentElement.classList.remove('tavern-ios-chat-load');
-              window.__tavernIOSRoleBoostRun?.();
-            }, 5600);
-          } catch (_) {}
-        })();
-        """)
     }
 
     @MainActor
     func scheduleDeepSmoothRelease(webView: WKWebView?) {
-        cancelDeepSmoothRelease()
-        let work = DispatchWorkItem { [weak self, weak webView] in
-            guard let self else { return }
-            Task { @MainActor in
-                guard !(self.deepSmoothReleaseWorkItem?.isCancelled ?? true) else { return }
-                self.deepSmoothReleaseWorkItem = nil
-                if self.browser.isKeyboardActive { return }
-                webView?.evaluateJavaScript("""
-                (() => {
-                  try {
-                    document.documentElement.classList.remove('tavern-ios-touch-input');
-                    if (!window.__tavernIOSChatLoadBusy) document.documentElement.classList.remove('tavern-ios-chat-load');
-                  } catch (_) {}
-                })();
-                """)
-            }
-        }
-        deepSmoothReleaseWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4, execute: work)
+        // v4.1 不再恢复网页侧重任务。之前的恢复过程会和二次点击输入框冲突。
+        scheduleKeyboardSettle(webView: webView)
     }
 
     @MainActor
     private func cancelKeyboardSettle() {
         keyboardSettleWorkItem?.cancel()
         keyboardSettleWorkItem = nil
-    }
-
-    @MainActor
-    private func cancelDeepSmoothRelease() {
         deepSmoothReleaseWorkItem?.cancel()
         deepSmoothReleaseWorkItem = nil
     }
@@ -127,59 +72,35 @@ extension WebView.Coordinator {
     @MainActor
     private func scheduleKeyboardSettle(webView: WKWebView?) {
         cancelKeyboardSettle()
-        cancelDeepSmoothRelease()
-
-        // 继续保持轻量状态，避免键盘刚收完时用户马上再次点击输入框产生主线程冲突。
         browser.isKeyboardActive = true
         browser.pictureInPicture.setPerformanceMode(true)
 
-        let work = DispatchWorkItem { [weak self, weak webView] in
+        let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             Task { @MainActor in
                 guard !(self.keyboardSettleWorkItem?.isCancelled ?? true) else { return }
                 self.keyboardSettleWorkItem = nil
-                self.finishKeyboardSettle(webView: webView)
+                self.lastKeyboardPerformanceState = false
+                self.browser.isKeyboardActive = false
+                self.browser.pictureInPicture.setPerformanceMode(false)
             }
         }
         keyboardSettleWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.35, execute: work)
+        // 缩短冷却：不做 JS 恢复，所以这里只等系统键盘动画真正结束。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.48, execute: work)
     }
 
     @MainActor
-    private func finishKeyboardSettle(webView: WKWebView?) {
-        lastKeyboardPerformanceState = false
-        browser.isKeyboardActive = false
-
-        // 这里不再跑 roleCardBoost / 图片扫描。旧版卡顿点就在键盘收回后立刻恢复重任务。
-        // 角色卡和图片优化交给网页侧 requestIdleCallback，并且避开输入 busy 与聊天加载 busy。
-        scheduleDeepSmoothRelease(webView: webView)
-    }
-
-    @MainActor
-    private func setKeyboardPerformanceMode(_ active: Bool, webView: WKWebView?, lightweightOnly: Bool = false) {
+    private func setKeyboardPerformanceMode(_ active: Bool, webView: WKWebView?) {
         let enabled = UserDefaults.standard.object(forKey: "performanceMode") as? Bool ?? true
         let targetState = active && enabled
-
-        if lastKeyboardPerformanceState == targetState {
-            browser.isKeyboardActive = active
-            browser.pictureInPicture.setPerformanceMode(active)
-            return
-        }
-
-        lastKeyboardPerformanceState = targetState
         browser.isKeyboardActive = active
         browser.pictureInPicture.setPerformanceMode(active)
 
-        guard enabled, let webView else { return }
-        webView.scrollView.layer.removeAllAnimations()
-        webView.layer.removeAllAnimations()
-        webView.evaluateJavaScript(WebView.performanceScript(active: true))
-        if !lightweightOnly {
-            webView.evaluateJavaScript("""
-            (() => {
-              try { document.documentElement.classList.add('tavern-ios-focus-warm'); } catch (_) {}
-            })();
-            """)
-        }
+        guard lastKeyboardPerformanceState != targetState else { return }
+        lastKeyboardPerformanceState = targetState
+        webView?.scrollView.layer.removeAllAnimations()
+        webView?.layer.removeAllAnimations()
+        // 不再在键盘动画期间 evaluateJavaScript。旧版卡顿主要来自这里触发整页样式重算。
     }
 }
